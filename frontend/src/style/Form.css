@@ -1,0 +1,35 @@
+/* .formInput {
+    position: absolute;
+    top: 85%;
+    left: 20%;
+    width: 60%; 
+
+} */
+
+.inputBox{
+    background-color: rgba(90, 90, 90, 0.456);
+    border-radius: 22px;
+    display: flex;
+    flex-direction: column;
+    scale: 92%;
+}
+
+#user-question, #user-question-label{
+    color: white !important;
+}
+/* .buttonInput {
+    position: absolute;
+    top: 85%;
+    left: 80%;
+} */
+
+/* .toolsBtn{
+    position: absolute;
+    top: 80%;
+    left: 20%;
+    color: white;
+} */
+
+@media (max-width: 768px) { /* Adjust the max-width as needed for your mobile breakpoint */
+
+}

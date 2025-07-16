@@ -1,0 +1,30 @@
+.overflowChat{
+  overflow-y: auto;
+  max-height: 80vh;
+}
+
+.chat-page {
+  min-height: 90vh;
+  max-height: 100vh;
+  position: relative;
+  overflow: hidden;
+}
+
+.chat-container {
+  /* flex: 1 1 auto; */
+  padding-top: 1rem;
+  padding-bottom: 1rem;
+  display: inline-block;
+}
+
+.chat-box {
+  max-height: 100%;
+  overflow-y: auto;
+}
+
+.input-container {
+  position: sticky;
+  bottom: 0;
+  /* padding: 1rem 0; */
+  z-index: 10;
+}

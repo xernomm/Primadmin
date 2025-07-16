@@ -1,0 +1,23 @@
+.sendButton
+{
+    background-color: rgba(255, 250, 240, 0);
+    border: 0 !important;
+    color: rgb(255, 255, 255);
+    font-size: 2rem;
+}
+
+.clear-chat-button
+{
+    position: absolute;
+    top: 5%;
+    right: 5%;
+}
+
+
+
+@media (max-width: 768px) { /* Adjust the max-width as needed for your mobile breakpoint */
+    .clear-chat-button
+    {
+        display: none !important;
+    }
+}
