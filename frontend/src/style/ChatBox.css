@@ -19,7 +19,6 @@
     color: white;
     /* Remove width and height properties to allow natural sizing */
     display: inline-block; /* Allow the box to size based on content */
-    max-width: 100%; /* Optional: limit the maximum width */
 }
 
 .noChatField

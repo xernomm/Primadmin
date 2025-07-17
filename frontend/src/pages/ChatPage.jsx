@@ -9,7 +9,7 @@ const ChatPage = () => {
       {/* Chat Field */}
       <div className="col-12 overflowChat">
         <div className="chat-container w-100 d-flex justify-content-center">
-          <div className="chat-box col-sm-11 col-md-10 col-lg-7">
+          <div className="chat-box col-sm-11 col-md-10 col-lg-8">
             <ChatField />
           </div>
         </div>

@@ -1,11 +1,11 @@
 import os
 import cx_Oracle
-from datetime import datetime
+from datetime import datetime, date
 import random
 import re
 import pandas as pd
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from mcp.server.fastmcp import FastMCP
 import traceback
 
@@ -27,7 +27,7 @@ engine = create_engine(db_url)
 mcp = FastMCP("OracleEmployeeManager", host="0.0.0.0", port=8000)
 
 @mcp.tool()
-def add_employee(name: str) -> str:
+def create_employee(name: str) -> str:
     """
     Menambahkan data dasar karyawan baru (hanya nama dan nomor karyawan otomatis).
     """
@@ -67,7 +67,7 @@ def add_employee(name: str) -> str:
             pass
 
 @mcp.tool()
-def update_employee_details(name: str, updates: dict) -> str:
+def update_employee_by_id(emp_id: int, updates: dict) -> str:
     """
     Memperbarui satu atau lebih field di tabel 'employee_details' berdasarkan nama karyawan.
     Jika detail belum ada, maka akan ditambahkan.
@@ -110,45 +110,32 @@ def update_employee_details(name: str, updates: dict) -> str:
         conn = cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
         cur = conn.cursor()
 
-        # Ambil ID berdasarkan nama karyawan
-        cur.execute("SELECT id FROM SMARTBOT.employees WHERE name = :name", {"name": name})
-        row = cur.fetchone()
-        if not row:
-            return f"⚠️ Karyawan dengan nama '{name}' tidak ditemukan."
-        emp_id = row[0]
-
-        # Ambil kolom valid dari tabel employee_details
+        # Validasi kolom
         cur.execute("SELECT * FROM SMARTBOT.employee_details WHERE ROWNUM = 1")
         valid_columns = set(desc[0].lower() for desc in cur.description if desc[0].lower() != "id")
 
-        # Filter hanya kolom yang valid
         clean_updates = {k: v for k, v in updates.items() if k.lower() in valid_columns}
         if not clean_updates:
-            return "⚠️ Tidak ada kolom valid untuk diperbarui."
+            return "⚠️ Tidak ada kolom valid yang diperbarui."
 
         clean_updates["emp_id"] = emp_id
 
-        # Cek apakah detail sudah ada
+        # Check existence
         cur.execute("SELECT id FROM SMARTBOT.employee_details WHERE emp_id = :id", {"id": emp_id})
         exists = cur.fetchone()
 
         if exists:
             set_clause = ", ".join(f"{k} = :{k}" for k in clean_updates if k != "emp_id")
-            cur.execute(f"""
-                UPDATE SMARTBOT.employee_details SET {set_clause}
-                WHERE emp_id = :emp_id
-            """, clean_updates)
+            cur.execute(f"UPDATE SMARTBOT.employee_details SET {set_clause} WHERE emp_id = :emp_id", clean_updates)
         else:
             columns = ", ".join(clean_updates.keys())
             values = ", ".join(f":{k}" for k in clean_updates)
-            cur.execute(f"""
-                INSERT INTO SMARTBOT.employee_details ({columns}) VALUES ({values})
-            """, clean_updates)
+            cur.execute(f"INSERT INTO SMARTBOT.employee_details ({columns}) VALUES ({values})", clean_updates)
 
         conn.commit()
-        return f"✅ Data detail untuk '{name}' berhasil disimpan."
+        return f"✅ Data karyawan ID {emp_id} berhasil diperbarui."
     except Exception as e:
-        return f"❌ Gagal memperbarui detail: {e}\n{traceback.format_exc()}"
+        return f"❌ Gagal update data ID {emp_id}: {e}\n{traceback.format_exc()}"
     finally:
         try:
             cur.close()
@@ -158,10 +145,38 @@ def update_employee_details(name: str, updates: dict) -> str:
 
 
 @mcp.tool()
-def list_employees(limit: int = 100) -> str:
+def delete_employee_by_id(emp_id: int) -> str:
     """
-    Ambil semua data karyawan lengkap dengan detailnya. Cocok untuk ditampilkan sebagai tabel markdown.
-    Maksimal 100 baris agar tetap cepat.
+    Delete employee and all related data by employee ID.
+    """
+    try:
+        conn = cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
+        cur = conn.cursor()
+
+        # Hapus relasi di leaves, absensi, employee_details
+        cur.execute("DELETE FROM SMARTBOT.leaves WHERE emp_id = :id", {"id": emp_id})
+        cur.execute("DELETE FROM SMARTBOT.absensi WHERE emp_id = :id", {"id": emp_id})
+        cur.execute("DELETE FROM SMARTBOT.employee_details WHERE emp_id = :id", {"id": emp_id})
+
+        # Hapus dari employees
+        cur.execute("DELETE FROM SMARTBOT.employees WHERE id = :id", {"id": emp_id})
+
+        conn.commit()
+        return f"✅ Data karyawan ID {emp_id} berhasil dihapus beserta seluruh data terkait."
+    except Exception as e:
+        return f"❌ Gagal menghapus karyawan ID {emp_id}: {e}\n{traceback.format_exc()}"
+    finally:
+        try:
+            cur.close()
+            conn.close()
+        except:
+            pass
+
+
+@mcp.tool()
+def get_all_employees(limit: int = 100) -> str:
+    """
+    Retrieve all employees with basic details (limit 100).
     """
     conn = cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
     cur = conn.cursor()
@@ -191,25 +206,9 @@ def list_employees(limit: int = 100) -> str:
 
 
 @mcp.tool()
-def find_by_id(emp_id: int) -> dict:
+def get_employee_by_id(emp_id: int) -> dict:
     """
-    Mencari satu data karyawan secara lengkap berdasarkan ID unik yang dimiliki setiap karyawan. ID ini berasal dari sistem dan tidak bisa ditentukan manual oleh pengguna. Fungsi ini akan menampilkan data dasar dari tabel employees sekaligus semua detail tambahan dari tabel employee_details, jika tersedia. Ini sangat berguna ketika pengguna mengetahui ID pasti seorang karyawan dan ingin menampilkan semua informasi terkait secara cepat.
-
-    Contoh pertanyaan pengguna yang cocok:
-
-    "Tampilkan data lengkap karyawan dengan id 3"
-
-    "Aku butuh informasi detail karyawan ID 17"
-
-    "Siapa yang punya ID 12, dan apa posisinya?"
-
-    Parameter:
-
-    emp_id (int): ID karyawan, wajib diisi.
-
-    Keluaran:
-
-    Dictionary berisi pasangan nama kolom dan nilainya, atau pesan error jika ID tidak ditemukan
+    Retrieve single employee and details by employee ID.
     """
     conn = cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
     cur = conn.cursor()
@@ -229,33 +228,9 @@ def find_by_id(emp_id: int) -> dict:
         return {"error": f"Karyawan dengan id {emp_id} tidak ditemukan."}
 
 @mcp.tool()
-def search_name(name: str, limit: int = 20) -> dict:
+def search_employee_by_name(name: str, limit: int = 20) -> dict:
     """
-        Fungsi ini digunakan untuk mencari karyawan berdasarkan nama atau sebagian dari nama mereka. Sistem akan melakukan pencarian dengan metode case-insensitive dan menggunakan wildcard %, sehingga kata kunci seperti “andi” bisa menemukan “Andi Setiawan”, “Andika”, dan “Handi”.
-
-        Cocok untuk digunakan saat pengguna hanya tahu nama depan, nama panggilan, atau hanya ingat sebagian nama.
-
-        Contoh pertanyaan:
-
-        "Cari karyawan bernama Andi"
-
-        "Siapa saja yang namanya mengandung 'nugroho'?"
-
-        "Saya lupa nama lengkapnya, tapi kayaknya ada 'fitri' di namanya"
-
-        Parameter:
-
-        name (str): Kata kunci nama yang ingin dicari.
-
-        limit (int, default 20): Jumlah maksimal hasil yang ingin ditampilkan.
-
-        Keluaran:
-
-        Dictionary dengan dua elemen:
-
-        columns: daftar nama kolom.
-
-        data: list baris hasil pencarian dalam bentuk list of list.
+    Search employees by name (partial match).
     """
     conn = cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
     cur = conn.cursor()
@@ -274,27 +249,9 @@ def search_name(name: str, limit: int = 20) -> dict:
     return {"columns": columns, "data": [list(row) for row in rows]}
 
 @mcp.tool()
-def search_email(email: str, limit: int = 20) -> dict:
+def search_employee_by_email(email: str, limit: int = 20) -> dict:
     """
-        Menemukan data karyawan berdasarkan alamat email. Ideal digunakan jika pengguna mengetahui email lengkap atau sebagian dari email yang terkait dengan karyawan. Sistem mencari secara case-insensitive dan menggunakan wildcard, sehingga pencarian seperti “@company.com” bisa menemukan banyak entri sekaligus.
-
-        Contoh prompt:
-
-        "Cari karyawan dengan email andi@example.com"
-
-        "Siapa yang pakai email @smartbot.co.id?"
-
-        "Saya cuma ingat bagian belakangnya, seperti .org, bisa dicari?"
-
-        Parameter:
-
-        email (str): Kata kunci alamat email.
-
-        limit (int, default 20): Jumlah maksimal hasil yang ingin ditampilkan.
-
-        Keluaran:
-
-        Dictionary berisi kolom dan data karyawan yang cocok dengan email tersebut.
+    Search employees by email (partial match).
     """
     conn = cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
     cur = conn.cursor()
@@ -313,27 +270,9 @@ def search_email(email: str, limit: int = 20) -> dict:
     return {"columns": columns, "data": [list(row) for row in rows]}
 
 @mcp.tool()
-def search_phone(phone: str, limit: int = 20) -> dict:
+def search_employee_by_phone(phone: str, limit: int = 20) -> dict:
     """
-        Digunakan untuk mencari karyawan berdasarkan nomor telepon. Sistem akan mencari nomor yang mengandung substring tertentu, sehingga sangat fleksibel untuk kasus ketika pengguna hanya ingat sebagian nomor. Pencarian tidak case-sensitive, dan cocok untuk data lokal maupun internasional.
-
-        Contoh prompt:
-
-        "Cari karyawan dengan nomor 0812345"
-
-        "Nomor 62-812 ada di data siapa?"
-
-        "Saya cuma ingat 123, coba cari siapa yang punya"
-
-        Parameter:
-
-        phone (str): Angka atau bagian dari nomor telepon.
-
-        limit (int, default 20): Maksimal jumlah hasil.
-
-        Keluaran:
-
-        Dictionary dengan hasil pencarian yang menampilkan semua kolom relevan seperti nama, posisi, email, dan sebagainya.
+        Search employees by phone number (partial match).
 
     """
     conn = cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
@@ -353,27 +292,9 @@ def search_phone(phone: str, limit: int = 20) -> dict:
     return {"columns": columns, "data": [list(row) for row in rows]}
 
 @mcp.tool()
-def filter_position(position: str, limit: int = 50) -> dict:
+def filter_employees_by_position(position: str, limit: int = 50) -> dict:
     """
-        Fungsi ini memfilter semua karyawan yang memiliki posisi tertentu di perusahaan. Posisi bisa berupa “Manager”, “Staff”, “Software Engineer”, dan sebagainya, sesuai nilai yang disimpan di kolom position pada tabel employee_details. Sistem akan melakukan pencarian menggunakan LIKE dan case-insensitive, jadi sangat fleksibel terhadap variasi input pengguna.
-
-        Contoh prompt:
-
-        "Tampilkan semua karyawan dengan posisi manager"
-
-        "Siapa saja yang Software Engineer?"
-
-        "Saya ingin melihat semua yang bekerja sebagai marketing"
-
-        Parameter:
-
-        position (str): Nama jabatan atau posisi.
-
-        limit (int, default 50): Batas jumlah hasil.
-
-        Keluaran:
-
-        Dictionary berisi kolom dan data karyawan dengan posisi yang sesuai.
+        Filter employees by job position.
     """
     conn = cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
     cur = conn.cursor()
@@ -392,27 +313,10 @@ def filter_position(position: str, limit: int = 50) -> dict:
     return {"columns": columns, "data": [list(row) for row in rows]}
 
 @mcp.tool()
-def filter_status(status: str, limit: int = 50) -> dict:
+def filter_employees_by_status(status: str, limit: int = 50) -> dict:
     """
-        Memfilter karyawan berdasarkan status kepegawaian seperti "tetap", "kontrak", atau "magang". Berguna untuk HR yang ingin mengetahui siapa saja yang masih kontrak atau sudah menjadi karyawan tetap. Input bersifat case-insensitive dan nilai status harus sesuai dengan data di kolom status pada employee_details.
+        Filter employees by employment status.
 
-        Contoh prompt:
-
-        "Lihat semua karyawan dengan status kontrak"
-
-        "Tampilkan siapa saja yang masih magang"
-
-        "Siapa yang sudah tetap?"
-
-        Parameter:
-
-        status (str): Status pekerjaan. Contoh: "tetap", "kontrak".
-
-        limit (int, default 50): Jumlah maksimal hasil.
-
-        Keluaran:
-
-        Dictionary yang menampilkan daftar karyawan sesuai status.
     """
     conn = cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
     cur = conn.cursor()
@@ -431,49 +335,9 @@ def filter_status(status: str, limit: int = 50) -> dict:
     return {"columns": columns, "data": [list(row) for row in rows]}
 
 @mcp.tool()
-def salary_above(min_salary: float, limit: int = 50) -> dict:
+def filter_employees_salary_above(min_salary: float, limit: int = 50) -> dict:
     """
-        Menampilkan daftar karyawan yang memiliki gaji di atas atau sama dengan nilai tertentu. Fungsi ini sangat berguna untuk mencari karyawan dengan penghasilan tinggi, baik untuk keperluan audit, evaluasi kompensasi, ataupun seleksi internal berdasarkan performa atau jabatan strategis.
-
-        Contoh pertanyaan pengguna:
-
-        "Siapa saja karyawan yang gajinya di atas 10 juta?"
-
-        "Tampilkan semua orang dengan gaji lebih dari 5 juta."
-
-        "Saya ingin melihat daftar karyawan bergaji tinggi."
-
-        "Ada berapa banyak karyawan dengan gaji minimal 8 juta?"
-
-        Fungsi ini akan menampilkan hasil dari gabungan tabel employees dan employee_details, yang mencakup:
-
-        id: ID karyawan.
-
-        name: Nama lengkap.
-
-        position: Jabatan atau peran.
-
-        status: Status kepegawaian (tetap, kontrak, dsb).
-
-        salary: Gaji pokok.
-
-        phone: Nomor HP (jika tersedia).
-
-        email: Email aktif.
-
-        gender: Jenis kelamin.
-
-        marital: Status pernikahan.
-
-        sp: Jumlah surat peringatan.
-
-        Parameter:
-
-        min_salary (float): Nilai batas bawah gaji yang ingin dicari. Karyawan dengan gaji sama atau di atas nilai ini akan ditampilkan.
-
-        limit (int, default: 50): Jumlah maksimum data yang dikembalikan. Bisa disesuaikan sesuai kebutuhan pengguna.
-
-        Fungsi menggunakan perintah SQL dengan kondisi WHERE salary >= :1 dan batas FETCH FIRST :2 ROWS ONLY untuk memastikan efisiensi kueri.
+        Filter employees with salary above threshold.
     """
     conn = cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
     cur = conn.cursor()
@@ -494,29 +358,11 @@ def salary_above(min_salary: float, limit: int = 50) -> dict:
     return {"columns": columns, "data": [list(row) for row in rows]}
 
 @mcp.tool()
-def salary_below(max_salary: float, limit: int = 50) -> dict:
+def filter_employees_salary_below(max_salary: float, limit: int = 50) -> dict:
     """
-        Menampilkan daftar karyawan yang memiliki gaji di bawah atau sama dengan nilai tertentu. Fungsi ini digunakan untuk keperluan monitoring keseimbangan struktur gaji, pemetaan pegawai dengan gaji rendah, atau evaluasi potensi kenaikan kompensasi bagi pegawai dengan pendapatan minim.
+        Filter employees with salary below threshold.
 
-        Contoh pertanyaan pengguna:
 
-        "Tampilkan semua karyawan dengan gaji di bawah 5 juta."
-
-        "Siapa saja yang gajinya kurang dari 6 juta?"
-
-        "Saya ingin tahu siapa saja yang masih digaji kecil."
-
-        "Ada berapa pegawai magang dengan gaji rendah?"
-
-        Fungsi mengembalikan kolom yang sama dengan salary_above, yaitu semua informasi dasar dan detail pegawai yang tersedia.
-
-        Parameter:
-
-        max_salary (float): Nilai batas atas gaji. Semua karyawan dengan gaji sama atau di bawah nilai ini akan ditampilkan.
-
-        limit (int, default: 50): Jumlah maksimum hasil yang ditampilkan. Gunakan angka lebih tinggi bila diperlukan hasil lebih lengkap.
-
-        Pencarian dilakukan dengan kueri WHERE salary <= :1, digabungkan dari tabel employees dan employee_details melalui JOIN.
     """
     conn = cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
     cur = conn.cursor()
@@ -536,120 +382,274 @@ def salary_below(max_salary: float, limit: int = 50) -> dict:
 
     return {"columns": columns, "data": [list(row) for row in rows]}
 
-# @mcp.tool()
-# def import_from_file(filepath: str) -> str:
-#     """
-#     Mengimpor data karyawan dari file eksternal ke database secara otomatis. Sistem mendukung berbagai jenis file seperti CSV, Excel, TXT, DOCX, PDF, dan SQL.
+@mcp.tool()
+def get_employee_leave_by_id(emp_id: int) -> dict:
+    """
+    Retrieve leave data of employee by ID.
+    """
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(text("SELECT * FROM SMARTBOT.leaves WHERE emp_id = :emp_id"), {"emp_id": emp_id}).fetchone()
+            if result is None:
+                return {"error": "Data cuti tidak ditemukan."}
+            columns = result.keys()
+            return dict(zip(columns, result))
+    except Exception as e:
+        return {"error": str(e)}
 
-#     File dapat berupa tabel terstruktur (seperti .csv atau .xlsx) maupun narasi bebas (seperti .txt, .docx, .pdf). Sistem akan mencoba mengenali informasi penting seperti nama, jabatan, gaji, dan kontak karyawan secara cerdas dari isi dokumen, lalu menambahkan data tersebut ke dalam dua tabel utama: `employees` dan `employee_details`.
+@mcp.tool()
+def get_all_employee_leaves(limit: int = 100) -> dict:
+    """
+    Retrieve leave data for all employees.
 
-#     Contoh pertanyaan pengguna:
-#     - "Saya punya file .csv daftar karyawan, tolong masukkan ke sistem."
-#     - "Ada dokumen PDF berisi biodata karyawan, bisa langsung diimpor?"
-#     - "File ini naratif, isinya seperti: Nama: Andi, Posisi: HR, Email: andi@... — apakah bisa dimasukkan ke sistem?"
+    Cocok digunakan untuk monitoring HR secara menyeluruh, seperti:
+    - "Lihat semua data cuti karyawan"
+    - "Siapa yang masih punya cuti banyak?"
 
-#     Format yang didukung:
-#     - `.csv`, `.xlsx`: Akan dibaca sebagai tabel, dengan kolom minimal `name`.
-#     - `.txt`, `.docx`, `.pdf`: Akan diekstrak menjadi teks biasa dan dianalisis menggunakan regex.
-#     - `.sql`: Akan langsung dieksekusi sebagai query ke database.
+    Parameter:
+    - limit (int): Jumlah maksimal baris data yang diambil (default 100) untuk mencegah query berat dan error Oracle.
 
-#     Informasi yang dapat dikenali secara otomatis:
-#     - name, position, status, salary, phone, email, gender, marital, sp
+    Output:
+    Dictionary berisi:
+    - columns: Daftar nama kolom.
+    - data: List data karyawan.
+    """
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(text("""
+                SELECT l.id, e.name, l.remaining_leave, l.sick_leave, l.maternity_leave, l.unpaid_leave, l.other_leave
+                FROM SMARTBOT.leaves l
+                JOIN SMARTBOT.employees e ON l.emp_id = e.id
+                FETCH FIRST :limit ROWS ONLY
+            """), {"limit": limit}).fetchall()
+            if not result:
+                return {"columns": [], "data": []}
+            columns = result[0].keys()
+            data = [dict(zip(columns, row)) for row in result]
+            return {"columns": columns, "data": data}
+    except Exception as e:
+        return {"error": str(e), "trace": traceback.format_exc()}
+    
+@mcp.tool()
+def update_leaves(emp_id: int, updates: dict) -> str:
+    """
+    Memperbarui satu atau lebih field cuti pada tabel `leaves` berdasarkan ID karyawan.
 
-#     Jika hanya nama yang dikenali, maka hanya akan dimasukkan ke tabel `employees`.
-#     Jika detail lainnya tersedia, akan dimasukkan ke `employee_details` juga.
+    Contoh pertanyaan:
+    - Update cuti pegawai ID 5, sisa cutinya jadi 8, cuti sakitnya jadi 2.
+    - Ubah unpaid_leave karyawan ID 7 jadi 3 hari.
 
-#     Contoh narasi dalam file:
-#     "Nama: Siti Aminah\nPosisi: Staff Marketing\nGaji: 5.000.000\nEmail: siti@company.com\nStatus: kontrak"
+    Parameter:
+    - emp_id (int): ID karyawan.
+    - updates (dict): pasangan {nama_kolom: nilai} yang ingin diubah.
+      Kolom valid:
+        - remaining_leave
+        - sick_leave
+        - maternity_leave
+        - unpaid_leave
+        - other_leave
 
-#     """
-#     try:
-#         from docx import Document
+    ❗ Kolom id dan emp_id tidak bisa diubah.
 
-#         text = ""
+    Output:
+    Pesan sukses atau error terkait update cuti.
+    """
+    try:
+        with engine.begin() as conn:
+            columns = [col[0].lower() for col in conn.execute(text("SELECT column_name FROM all_tab_columns WHERE table_name = 'LEAVES' AND owner = 'SMARTBOT'"))]
+            valid_updates = {k: v for k, v in updates.items() if k.lower() in columns and k.lower() != "id" and k.lower() != "emp_id"}
+            if not valid_updates:
+                return "⚠️ Tidak ada kolom cuti valid yang diperbarui."
+            set_clause = ", ".join(f"{k} = :{k}" for k in valid_updates)
+            valid_updates["emp_id"] = emp_id
+            conn.execute(text(f"UPDATE SMARTBOT.leaves SET {set_clause} WHERE emp_id = :emp_id"), valid_updates)
+        return f"✅ Data cuti karyawan ID {emp_id} berhasil diperbarui."
+    except Exception as e:
+        return f"❌ Gagal update data cuti ID {emp_id}: {e}\n{traceback.format_exc()}"
 
-#         if filepath.endswith(".csv"):
-#             df = pd.read_csv(filepath)
-#         elif filepath.endswith(".xlsx"):
-#             df = pd.read_excel(filepath)
-#         elif filepath.endswith(".txt"):
-#             with open(filepath, encoding="utf-8") as f:
-#                 text = f.read()
-#         elif filepath.endswith(".docx"):
-#             doc = Document(filepath)
-#             text = "\n".join([p.text for p in doc.paragraphs])
-#         elif filepath.endswith(".pdf"):
-#             import PyPDF2
-#             with open(filepath, "rb") as f:
-#                 reader = PyPDF2.PdfReader(f)
-#                 for page in reader.pages:
-#                     text += page.extract_text() + "\n"
-#         elif filepath.endswith(".sql"):
-#             with open(filepath, "r", encoding="utf-8") as f:
-#                 sql = f.read()
-#             with engine.begin() as conn:
-#                 conn.execute(sql)
-#             return "✅ Query SQL berhasil dijalankan."
-#         else:
-#             return "❌ Format file tidak didukung."
+@mcp.tool()
+def update_absensi(absen_id: int, updates: dict) -> str:
+    """
+    Memperbarui satu atau lebih field di tabel 'absensi' berdasarkan ID absensi (absen_id).
+    Tool ini digunakan untuk mengoreksi data absensi karyawan apabila terdapat kesalahan lokasi, waktu, atau status remote/terlambat.
 
-#         if text:
-#             pattern_map = {
-#                 "name": r"(?i)nama[:\s]+([\w\s]+)",
-#                 "position": r"(?i)posisi[:\s]+([\w\s]+)",
-#                 "status": r"(?i)status[:\s]+([\w]+)",
-#                 "salary": r"(?i)gaji[:\s]+(\d+[.,]?\d*)",
-#                 "phone": r"(?i)telepon[:\s]+([\d\-+() ]+)",
-#                 "email": r"(?i)email[:\s]+([\w._%+-]+@[\w.-]+)",
-#                 "gender": r"(?i)jenis kelamin[:\s]+(\w+)",
-#                 "marital": r"(?i)status pernikahan[:\s]+(\w+)",
-#                 "sp": r"(?i)surat peringatan[:\s]+(\d+)"
-#             }
-#             data = {}
-#             for key, pattern in pattern_map.items():
-#                 match = re.search(pattern, text)
-#                 if match:
-#                     data[key] = match.group(1).strip()
-#             if "name" not in data:
-#                 return "❌ Gagal mengenali nama dalam narasi."
-#             df = pd.DataFrame([data])
+    Cocok untuk perintah seperti:
+    - "Tolong perbaiki absensi ID 15, alamatnya diubah ke Jalan Gatot Subroto No. 12."
+    - "Update jarak absensi ID 22 jadi 2.1 km dan status remote-nya diaktifkan."
+    - "Koreksi data absensi ID 30, dia sebenarnya tidak telat."
 
-#         df = df.fillna(None)
-#         conn = cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
-#         cur = conn.cursor()
+    Parameter:
+    - absen_id (int): ID unik absensi (primary key dari tabel absensi).
+    - updates (dict): Dictionary berisi pasangan {nama_kolom: nilai} untuk field yang ingin diperbarui.
 
-#         for _, row in df.iterrows():
-#             id_var = cur.var(cx_Oracle.NUMBER)
-#             cur.execute("INSERT INTO SMARTBOT.employees (name) VALUES (:1) RETURNING id INTO :2", [row["name"], id_var])
-#             emp_id = int(id_var.getvalue()[0])
+    Contoh penggunaan:
+    absen_id: 15
+    updates: {
+        "addr": "Jalan Gatot Subroto No. 12",
+        "dist": 1.2,
+        "late": 0
+    }
 
-#             detail_data = {
-#                 "emp_id": emp_id,
-#                 "position": row.get("position"),
-#                 "status": row.get("status"),
-#                 "salary": row.get("salary"),
-#                 "phone": row.get("phone"),
-#                 "email": row.get("email"),
-#                 "gender": row.get("gender"),
-#                 "marital": row.get("marital"),
-#                 "sp": row.get("sp")
-#             }
-#             detail_data = {k: v for k, v in detail_data.items() if v is not None}
+    🔎 Daftar kolom yang valid di tabel SMARTBOT.absensi:
+    - emp_id (int): ID karyawan (tidak disarankan diubah, kecuali dalam kasus koreksi penginputan).
+    - latitude (float): Koordinat latitude lokasi absen, contoh: -6.200123.
+    - longitude (float): Koordinat longitude lokasi absen, contoh: 106.812345.
+    - addr (str): Alamat teks lokasi absen, contoh: "Jl. Sudirman No.1, Jakarta".
+    - dist (float): Jarak dari kantor (dalam kilometer), contoh: 3.25.
+    - timestamp (datetime): Waktu absen. Format ideal ISO 8601, contoh: "2025-07-16T08:30:00".
+    - late (int): Status keterlambatan, 1 untuk telat, 0 untuk hadir tepat waktu.
+    - remote (int): Status remote, 1 berarti bekerja secara remote, 0 berarti onsite.
 
-#             if detail_data:
-#                 columns = ', '.join(detail_data.keys())
-#                 values = ', '.join(f":{k}" for k in detail_data.keys())
-#                 cur.execute(f"INSERT INTO SMARTBOT.employee_details ({columns}) VALUES ({values})", detail_data)
+    ❗ Kolom 'id' (absen_id) tidak bisa diperbarui secara manual. Tool ini hanya melakukan update berdasarkan ID absensi yang valid.
 
-#         conn.commit()
-#         cur.close()
-#         conn.close()
+    Output:
+    ✅ Pesan keberhasilan update, atau ❌ pesan error jika gagal.
+    """
+    try:
+        with engine.begin() as conn:
+            # Ambil semua kolom absensi
+            columns = [col[0].lower() for col in conn.execute(text("""
+                SELECT column_name FROM all_tab_columns
+                WHERE table_name = 'ABSENSI' AND owner = 'SMARTBOT'
+            """))]
 
-#         return f"✅ Data dari file {os.path.basename(filepath)} berhasil diimpor."
-#     except Exception as e:
-#         return f"❌ Gagal import: {e}"
+            # Validasi updates
+            valid_updates = {
+                k: v for k, v in updates.items()
+                if k.lower() in columns and k.lower() not in ["id"]
+            }
+
+            if not valid_updates:
+                return "⚠️ Tidak ada kolom absensi valid yang diperbarui."
+
+            # Siapkan query update dinamis
+            set_clause = ", ".join(f"{k} = :{k}" for k in valid_updates)
+            valid_updates["absen_id"] = absen_id
+
+            conn.execute(text(f"""
+                UPDATE SMARTBOT.absensi
+                SET {set_clause}
+                WHERE id = :absen_id
+            """), valid_updates)
+
+        return f"✅ Data absensi ID {absen_id} berhasil diperbarui."
+    except Exception as e:
+        return f"❌ Gagal update data absensi ID {absen_id}: {e}\n{traceback.format_exc()}"
+
+@mcp.tool()
+def get_today_attendance(limit: int = 100) -> dict:
+    """
+    Get today’s attendance records.
+
+    """
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(text("""
+                SELECT a.id, e.name, a.addr, a.dist, a.timestamp, a.late, a.remote
+                FROM SMARTBOT.absensi a
+                JOIN SMARTBOT.employees e ON a.emp_id = e.id
+                WHERE TRUNC(a.timestamp) = TRUNC(SYSDATE)
+                ORDER BY a.timestamp ASC, a.dist ASC
+                FETCH FIRST :limit ROWS ONLY
+            """), {"limit": limit}).fetchall()
+            columns = result[0].keys() if result else []
+            data = [dict(zip(columns, row)) for row in result]
+            return {"columns": columns, "data": data}
+    except Exception as e:
+        return {"error": str(e), "trace": traceback.format_exc()}
 
 
+@mcp.tool()
+def get_today_late_employees(limit: int = 100) -> dict:
+    """
+    List employees who were late today.
 
+    """
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(text("""
+                SELECT e.name, a.timestamp
+                FROM SMARTBOT.absensi a
+                JOIN SMARTBOT.employees e ON a.emp_id = e.id
+                WHERE TRUNC(a.timestamp) = TRUNC(SYSDATE)
+                AND TO_CHAR(a.timestamp, 'HH24:MI') > '08:30'
+                ORDER BY a.timestamp ASC
+                FETCH FIRST :limit ROWS ONLY
+            """), {"limit": limit}).fetchall()
+            columns = result[0].keys() if result else []
+            data = [dict(zip(columns, row)) for row in result]
+            return {"columns": columns, "data": data}
+    except Exception as e:
+        return {"error": str(e), "trace": traceback.format_exc()}
+
+@mcp.tool()
+def get_today_distance_over_five_km(limit: int = 100) -> dict:
+    """
+    Get employees who checked in >5 km from office.
+
+    """
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(text("""
+                SELECT e.name, a.addr, a.dist
+                FROM SMARTBOT.absensi a
+                JOIN SMARTBOT.employees e ON a.emp_id = e.id
+                WHERE TRUNC(a.timestamp) = TRUNC(SYSDATE)
+                AND a.dist > 5
+                ORDER BY a.dist DESC
+                FETCH FIRST :limit ROWS ONLY
+            """), {"limit": limit}).fetchall()
+            columns = result[0].keys() if result else []
+            data = [dict(zip(columns, row)) for row in result]
+            return {"columns": columns, "data": data}
+    except Exception as e:
+        return {"error": str(e), "trace": traceback.format_exc()}
+
+@mcp.tool()
+def get_today_remote_employees(limit: int = 100) -> dict:
+    """
+    Get employees working remotely today.
+
+    """
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(text("""
+                SELECT e.name, a.timestamp, a.addr, a.dist
+                FROM SMARTBOT.absensi a
+                JOIN SMARTBOT.employees e ON a.emp_id = e.id
+                WHERE TRUNC(a.timestamp) = TRUNC(SYSDATE)
+                AND a.remote = 1
+                ORDER BY a.timestamp ASC
+                FETCH FIRST :limit ROWS ONLY
+            """), {"limit": limit}).fetchall()
+            columns = result[0].keys() if result else []
+            data = [dict(zip(columns, row)) for row in result]
+            return {"columns": columns, "data": data}
+    except Exception as e:
+        return {"error": str(e), "trace": traceback.format_exc()}
+
+@mcp.tool()
+def get_today_onsite_employees(limit: int = 100) -> dict:
+    """
+    Get employees working onsite today.
+
+    """
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(text("""
+                SELECT e.name, a.timestamp, a.addr, a.dist
+                FROM SMARTBOT.absensi a
+                JOIN SMARTBOT.employees e ON a.emp_id = e.id
+                WHERE TRUNC(a.timestamp) = TRUNC(SYSDATE)
+                AND a.remote = 0
+                ORDER BY a.timestamp ASC
+                FETCH FIRST :limit ROWS ONLY
+            """), {"limit": limit}).fetchall()
+            columns = result[0].keys() if result else []
+            data = [dict(zip(columns, row)) for row in result]
+            return {"columns": columns, "data": data}
+    except Exception as e:
+        return {"error": str(e), "trace": traceback.format_exc()}
+    
 if __name__ == "__main__":
     mcp.run(transport='sse')

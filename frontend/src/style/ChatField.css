@@ -1,6 +1,5 @@
 .chatfield
 {
-    margin: auto;
     overflow-y: auto;
     display: inline-block;
 }
