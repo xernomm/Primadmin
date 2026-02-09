@@ -12,14 +12,12 @@ import BackgroundImg from '../img/Background-vankaai.png';
 export function Chat() {
     const navigate = useNavigate();
     const { user, isAuthenticated, logout } = useAuthStore();
-    const {
-        messages,
-        isLoading,
-        sendMessage,
-        loadConversations,
-        currentConversationId,
-        initSocket
-    } = useChatStore();
+    const messages = useChatStore((state) => state.messages);
+    const isLoading = useChatStore((state) => state.isLoading);
+    const sendMessage = useChatStore((state) => state.sendMessage);
+    const loadConversations = useChatStore((state) => state.loadConversations);
+    const currentConversationId = useChatStore((state) => state.currentConversationId);
+    const initSocket = useChatStore((state) => state.initSocket);
 
     const [sidebarOpen, setSidebarOpen] = useState(true);
     const [policiesOpen, setPoliciesOpen] = useState(false);
@@ -33,8 +31,7 @@ export function Chat() {
 
         // Cleanup on unmount
         return () => {
-            const { disconnectSocket } = useChatStore.getState();
-            disconnectSocket();
+            useChatStore.getState().disconnectSocket();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);

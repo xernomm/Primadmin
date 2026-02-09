@@ -22,7 +22,8 @@ interface ChatState {
     error: string | null;
     statusText: string;
     socket: Socket | null;
-    stageData: StageData[];  // For processing block display
+    stageDataByConversation: Record<number, StageData[]>;  // For processing block display per conversation
+    processingConversationId: number | null;  // Track which conversation is currently processing
 
     initSocket: () => void;
     disconnectSocket: () => void;
@@ -32,7 +33,8 @@ interface ChatState {
     deleteConversation: (conversationId: number) => Promise<void>;
     createNewConversation: () => void;
     clearError: () => void;
-    clearStageData: () => void;
+    clearStageData: (conversationId?: number) => void;
+    getStageData: () => StageData[];  // Get stage data for current/processing conversation
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -43,7 +45,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     error: null,
     statusText: '',
     socket: null,
-    stageData: [],
+    stageDataByConversation: {},
+    processingConversationId: null,
 
     initSocket: () => {
         const existingSocket = get().socket;
@@ -75,16 +78,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
             set({ statusText: data.status });
         });
 
-        // Handle stage_complete events for processing block
         socket.on('stage_complete', (data: StageData) => {
             console.log('[Socket] Stage complete:', data);
-            set((state) => ({
-                stageData: [...state.stageData, data]
-            }));
+            const processingId = get().processingConversationId;
+            if (processingId !== null) {
+                set((state) => ({
+                    stageDataByConversation: {
+                        ...state.stageDataByConversation,
+                        [processingId]: [...(state.stageDataByConversation[processingId] || []), data]
+                    }
+                }));
+            }
         });
 
         socket.on('error', (data: { message: string }) => {
-            set({ error: data.message, isLoading: false, stageData: [] });
+            const processingId = get().processingConversationId;
+            set((state) => ({
+                error: data.message,
+                isLoading: false,
+                stageDataByConversation: processingId !== null
+                    ? { ...state.stageDataByConversation, [processingId]: [] }
+                    : state.stageDataByConversation,
+                processingConversationId: null
+            }));
         });
 
         set({ socket });
@@ -122,7 +138,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
             return;
         }
 
-        set({ isLoading: true, error: null, statusText: 'Memproses...', stageData: [] });
+        const targetConversationId = conversationId || get().currentConversationId || -1; // -1 for new conversation
+        set({
+            isLoading: true,
+            error: null,
+            statusText: 'Memproses...',
+            processingConversationId: targetConversationId,
+            stageDataByConversation: {
+                ...get().stageDataByConversation,
+                [targetConversationId]: []  // Clear stage data for this conversation
+            }
+        });
 
         // Optimistic update
         const userMessage: Message = {
@@ -227,7 +253,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     currentConversationId: response.conversation_id,
                     isLoading: false,
                     statusText: '',
-                    stageData: []  // Clear stage data after response complete
+                    processingConversationId: null  // Clear processing state
                 }));
 
                 get().loadConversations();
@@ -244,6 +270,36 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 ...msg,
                 role: msg.role as 'user' | 'assistant',
             }));
+
+            // Check if the last message is from user (meaning assistant response is pending)
+            const lastMessage = messages[messages.length - 1];
+            const isPendingResponse = lastMessage && lastMessage.role === 'user';
+
+            // If pending response, fetch processing stages from database
+            if (isPendingResponse) {
+                try {
+                    const stagesResponse = await chatApi.getProcessingStages(conversationId);
+                    const stages = stagesResponse.stages || [];
+
+                    if (stages.length > 0) {
+                        // We have saved processing stages - restore them and show processing UI
+                        set({
+                            messages,
+                            currentConversationId: conversationId,
+                            isLoading: true, // Keep loading true to show processing block
+                            stageDataByConversation: {
+                                ...get().stageDataByConversation,
+                                [conversationId]: stages
+                            },
+                            processingConversationId: conversationId,
+                            statusText: 'Melanjutkan proses...'
+                        });
+                        return;
+                    }
+                } catch (stagesError) {
+                    console.error('Failed to load processing stages:', stagesError);
+                }
+            }
 
             set({
                 messages,
@@ -287,7 +343,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     clearError: () => set({ error: null }),
 
-    clearStageData: () => set({ stageData: [] }),
+    clearStageData: (conversationId?: number) => {
+        const targetId = conversationId || get().currentConversationId;
+        if (targetId !== null) {
+            set((state) => ({
+                stageDataByConversation: {
+                    ...state.stageDataByConversation,
+                    [targetId]: []
+                }
+            }));
+        }
+    },
+
+    getStageData: () => {
+        const state = get();
+        // Prioritize processing conversation, then current conversation
+        const targetId = state.processingConversationId ?? state.currentConversationId;
+        if (targetId !== null && state.stageDataByConversation[targetId]) {
+            return state.stageDataByConversation[targetId];
+        }
+        return [];
+    },
 }));
 
 export default useChatStore;

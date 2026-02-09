@@ -35,6 +35,13 @@ export const chatApi = {
         const response = await client.delete<{ message: string }>(`/conversations/${conversationId}`);
         return response.data;
     },
+
+    getProcessingStages: async (conversationId: number): Promise<{ stages: any[] }> => {
+        const response = await client.get<{ stages: any[] }>(
+            `/conversations/${conversationId}/processing_stages`
+        );
+        return response.data;
+    },
 };
 
 export default chatApi;

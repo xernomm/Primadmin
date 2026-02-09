@@ -21,6 +21,7 @@ from chats.chat_service import (
     get_messages_by_conversation_id,
     delete_conversation_by_id
 )
+from chats.processing_service import save_processing_stage, get_processing_stages, clear_processing_stages
 from LLM.bot import get_context_from_rag, store_chat_history
 from MCP.agent_runner import run_agent
 from tools.run_async import run_async
@@ -268,6 +269,16 @@ def delete_conversation(conversation_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/api/conversations/<int:conversation_id>/processing_stages", methods=["GET"])
+@jwt_required
+def get_conversation_processing_stages(conversation_id):
+    """Get processing stages for a conversation (used for page refresh recovery)."""
+    try:
+        stages = get_processing_stages(conversation_id)
+        return jsonify({"stages": stages})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 # <---------------------------------------------------- POLICIES API ------------------------------------------------------>
 
 @app.route("/api/policies", methods=["GET"])
@@ -376,6 +387,15 @@ def handle_chat_message(data):
                     def stage_callback(stage_data):
                         print(f"[SOCKET] Emitting stage_complete: Stage {stage_data.get('stage', '?')}")
                         socketio.emit('stage_complete', stage_data, room=user_sid)
+                        # Persist stage to database
+                        if conv_id and conv_id > 0:
+                            save_processing_stage(
+                                conversation_id=conv_id,
+                                stage_number=stage_data.get('stage', 0),
+                                stage_name=stage_data.get('name', ''),
+                                content=stage_data.get('content', ''),
+                                status=stage_data.get('status', 'complete')
+                            )
 
                     # Run agent with both callbacks
                     result = run_async(run_agent(
@@ -395,6 +415,11 @@ def handle_chat_message(data):
                     import json
                     json_compatible_result = json.loads(json.dumps(result, default=str))
                     socketio.emit('chat_response', json_compatible_result, room=user_sid)
+                    
+                    # Clear processing stages from DB now that response is complete
+                    final_conv_id = result.get("conversation_id") if isinstance(result, dict) else conv_id
+                    if final_conv_id and final_conv_id > 0:
+                        clear_processing_stages(final_conv_id)
                     
                 except Exception as agent_error:
                     logging.exception("Background agent failed")

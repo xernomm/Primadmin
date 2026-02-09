@@ -273,7 +273,7 @@ class HRAgent:
                 ollama.chat,
                 model=ESCALATION_MODEL,
                 messages=messages,
-                options={"temperature": 0.3, "num_predict": 5000}
+                options={"temperature": 0.3, "num_predict": 50000}
             )
             
             content = response.get("message", {}).get("content", "")
@@ -326,7 +326,7 @@ class HRAgent:
                 ollama.chat,
                 model=PLANNING_MODEL,
                 messages=messages,
-                options={"temperature": 0.3, "num_predict": 8000}
+                options={"temperature": 0.3, "num_predict": 80000}
             )
             
             content = response.get("message", {}).get("content", "")
@@ -759,7 +759,7 @@ class HRAgent:
                     model=TOOL_MODEL,
                     messages=messages,
                     tools=tools,
-                    options={"temperature": 0.3, "num_predict": 10000}
+                    options={"temperature": 0.3, "num_predict": 100000}
                 )
                 
                 message = response.get("message", {})
@@ -847,7 +847,7 @@ class HRAgent:
                 ollama.chat,
                 model=RESPONSE_MODEL,
                 messages=messages,
-                options={"temperature": 0.5, "num_predict": 40000}  # Increased for longer responses
+                options={"temperature": 0.5, "num_predict": 400000}  # Increased 10x for longer responses
             )
             
             state.final_response = response.get("message", {}).get("content", "")

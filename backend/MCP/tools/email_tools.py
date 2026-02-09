@@ -36,9 +36,21 @@ dsn = cx_Oracle.makedsn(ORACLE_HOST, ORACLE_PORT, service_name=ORACLE_SERVICE)
 TEMPLATE_DIR = Path(__file__).parent.parent.parent / "templates" / "email"
 
 
+def _sanitize_email(email: str) -> str:
+    """Sanitize email address string."""
+    if not email:
+        return ""
+    # Remove whitespace, quotes, and trailing dots
+    clean = email.strip().replace("'", "").replace('"', "")
+    if clean.endswith("."):
+        clean = clean[:-1]
+    return clean
+
+
 def _get_connection():
     """Get Oracle database connection."""
     return cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
+
 
 
 def _send_email(to_email: str, subject: str, html_content: str) -> bool:
@@ -54,10 +66,15 @@ def _send_email(to_email: str, subject: str, html_content: str) -> bool:
         True if successful, False otherwise
     """
     try:
+        clean_email = _sanitize_email(to_email)
+        if not clean_email:
+            print("[EMAIL ERROR] Invalid email address (empty after sanitization)")
+            return False
+            
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
         msg["From"] = SMTP_FROM_EMAIL
-        msg["To"] = to_email
+        msg["To"] = clean_email
         
         html_part = MIMEText(html_content, "html")
         msg.attach(html_part)
@@ -65,11 +82,11 @@ def _send_email(to_email: str, subject: str, html_content: str) -> bool:
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
             server.starttls()
             server.login(SMTP_USER, SMTP_PASSWORD)
-            server.sendmail(SMTP_FROM_EMAIL, to_email, msg.as_string())
+            server.sendmail(SMTP_FROM_EMAIL, clean_email, msg.as_string())
         
         return True
     except Exception as e:
-        print(f"[EMAIL ERROR] Failed to send email: {e}")
+        print(f"[EMAIL ERROR] Failed to send email to {to_email}: {e}")
         return False
 
 
@@ -98,6 +115,7 @@ def send_warning_letter(emp_id: int, reason: str, issued_by: int = 1) -> Dict[st
     Returns:
         Dict with success status, new SP level, and message
     """
+    conn = None
     try:
         conn = _get_connection()
         cur = conn.cursor()
@@ -146,10 +164,7 @@ def send_warning_letter(emp_id: int, reason: str, issued_by: int = 1) -> Dict[st
             issuer_name=issuer_name
         )
         
-        # Send email
-        subject = f"Surat Peringatan {new_sp_level} ({sp_type}) - {emp_name}"
-        email_sent = _send_email(emp_email, subject, html_content)
-        
+        # 1. Update DB first (locked in transaction)
         # Update employee sp_level
         cur.execute("""
             UPDATE employees 
@@ -157,36 +172,64 @@ def send_warning_letter(emp_id: int, reason: str, issued_by: int = 1) -> Dict[st
             WHERE id = :emp_id
         """, {"sp_level": new_sp_level, "emp_id": emp_id})
         
-        # Record in warnings table
+        # Record in warnings table (initially with email_sent=0)
         cur.execute("""
             INSERT INTO warnings (employee_id, warning_type, reason, issued_date, issued_by, email_sent, email_sent_at)
-            VALUES (:emp_id, :w_type, :reason, TRUNC(SYSDATE), :issued_by, :sent, :sent_at)
+            VALUES (:emp_id, :w_type, :reason, TRUNC(SYSDATE), :issued_by, 0, NULL)
         """, {
             "emp_id": emp_id,
             "w_type": sp_type,
             "reason": reason,
-            "issued_by": issued_by,
-            "sent": 1 if email_sent else 0,
-            "sent_at": datetime.now() if email_sent else None
+            "issued_by": issued_by
         })
         
-        conn.commit()
-        cur.close()
-        conn.close()
+        # 2. Attempt to send email
+        subject = f"Surat Peringatan {new_sp_level} ({sp_type}) - {emp_name}"
+        email_sent = _send_email(emp_email, subject, html_content)
         
-        return {
-            "success": True,
-            "message": f"{sp_type} berhasil dikirim ke {emp_name} ({emp_email}).",
-            "employee_name": emp_name,
-            "employee_email": emp_email,
-            "previous_sp_level": current_sp,
-            "new_sp_level": new_sp_level,
-            "sp_type": sp_type,
-            "email_sent": email_sent,
-            "reason": reason
-        }
+        # 3. Finalize transaction based on email result
+        if email_sent:
+            # Update warning record to show email sent
+            cur.execute("""
+                UPDATE warnings 
+                SET email_sent = 1, email_sent_at = CURRENT_TIMESTAMP 
+                WHERE employee_id = :emp_id AND warning_type = :w_type AND issued_date = TRUNC(SYSDATE)
+            """, {"emp_id": emp_id, "w_type": sp_type})
+            
+            conn.commit()
+            cur.close()
+            conn.close()
+            
+            return {
+                "success": True,
+                "message": f"{sp_type} berhasil dikirim ke {emp_name} ({emp_email}).",
+                "employee_name": emp_name,
+                "employee_email": emp_email,
+                "previous_sp_level": current_sp,
+                "new_sp_level": new_sp_level,
+                "sp_type": sp_type,
+                "email_sent": True,
+                "reason": reason
+            }
+        else:
+            # Email failed - Rollback everything
+            conn.rollback()
+            cur.close()
+            conn.close()
+            
+            return {
+                "success": False, 
+                "error": f"Gagal mengirim email ke {emp_email}. Periksa alamat email atau koneksi server.",
+                "details": "Database update di-rollback karena email gagal."
+            }
         
     except Exception as e:
+        if conn:
+            try:
+                conn.rollback()
+                conn.close()
+            except:
+                pass
         return {"success": False, "error": str(e), "trace": traceback.format_exc()}
 
 

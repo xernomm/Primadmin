@@ -11,8 +11,18 @@ interface ChatWindowProps {
     onSuggestionClick?: (text: string) => void;
 }
 
+const EMPTY_STAGES: any[] = [];
+
 export function ChatWindow({ messages, isLoading, onSuggestionClick }: ChatWindowProps) {
-    const { stageData, statusText } = useChatStore();
+    const statusText = useChatStore((state) => state.statusText);
+    // Use a safe selector to get stage data without calling store methods that use get()
+    const stageData = useChatStore((state) => {
+        const targetId = state.processingConversationId ?? state.currentConversationId;
+        if (targetId !== null && state.stageDataByConversation[targetId]) {
+            return state.stageDataByConversation[targetId];
+        }
+        return EMPTY_STAGES;
+    });
 
     if (messages.length === 0 && !isLoading) {
         return (
