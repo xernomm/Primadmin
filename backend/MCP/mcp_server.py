@@ -1,655 +1,277 @@
+"""
+MCP Server for HR Agent - Stdio Transport.
+Provides tools for HR management operations via MCP protocol.
+All tool implementations are imported from the modular tools/ directory.
+"""
 import os
-import cx_Oracle
-from datetime import datetime, date
-import random
-import re
-import pandas as pd
-from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
-from mcp.server.fastmcp import FastMCP
-import traceback
+import sys
 
+# Add parent directory to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from mcp.server.fastmcp import FastMCP
+from dotenv import load_dotenv
+
+# Import tool functions from modular tools
+from tools.employee_tools import (
+    search_employees as _search_employees,
+    get_employee_by_id as _get_employee_by_id,
+    get_all_employees as _get_all_employees,
+    create_employee as _create_employee,
+    update_employee_by_id as _update_employee_by_id,
+    delete_employee_by_id as _delete_employee_by_id,
+    filter_employees_by_position as _filter_employees_by_position,
+    filter_employees_by_status as _filter_employees_by_status,
+    filter_employees_salary_above as _filter_employees_salary_above,
+    filter_employees_salary_below as _filter_employees_salary_below
+)
+from tools.attendance_tools import (
+    get_today_attendance as _get_today_attendance,
+    get_today_late_employees as _get_today_late_employees,
+    get_today_remote_employees as _get_today_remote_employees,
+    get_today_onsite_employees as _get_today_onsite_employees,
+    update_absensi as _update_absensi
+)
+from tools.leave_tools import (
+    get_employee_leave_by_id as _get_employee_leave_by_id,
+    get_all_employee_leaves as _get_all_employee_leaves,
+    update_leaves as _update_leaves
+)
+from tools.sql_generator import (
+    generate_and_execute_sql as _generate_and_execute_sql
+)
+from tools.utility_tools import (
+    get_current_time as _get_current_time
+)
 
 load_dotenv()
 
-ORACLE_USER = os.getenv("ORACLE_USER")
-ORACLE_PASSWORD = os.getenv("ORACLE_PASSWORD")
-ORACLE_HOST = os.getenv("ORACLE_HOST")
-ORACLE_PORT = os.getenv("ORACLE_PORT")
-ORACLE_SERVICE = os.getenv("ORACLE_SERVICE_NAME")
+# Initialize MCP Server (using stdio transport as per user request)
+mcp = FastMCP("HRAgentMCP")
 
-# Build DSN and connection string for SQLAlchemy
-dsn = cx_Oracle.makedsn(ORACLE_HOST, ORACLE_PORT, service_name=ORACLE_SERVICE)
 
-# Init MCP
-db_url = f"oracle+cx_oracle://{ORACLE_USER}:{ORACLE_PASSWORD}@{dsn}"
-engine = create_engine(db_url)
-mcp = FastMCP("OracleEmployeeManager", host="0.0.0.0", port=8000)
+# ============================================================================
+# EMPLOYEE TOOLS
+# ============================================================================
 
 @mcp.tool()
-def create_employee(name: str) -> str:
+def search_employees(query: str, limit: int = 20) -> dict:
     """
-    Menambahkan data dasar karyawan baru (hanya nama dan nomor karyawan otomatis).
+    Mencari data karyawan secara fleksibel (Fuzzy Search).
+    Gunakan tool ini jika user memberikan nama, email, atau nomor telepon (parsial atau lengkap).
+    Output mencakup: ID, nama, departemen, posisi, dan kontak dasar.
     """
-    try:
-        now = datetime.now()
-        random_number = random.randint(100, 999)
-        employee_number = f"{now.year}-{now.month:02d}-{now.day:02d}-{random_number}"
-
-        conn = cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
-        cur = conn.cursor()
-
-        emp_id_var = cur.var(cx_Oracle.NUMBER)
-        print("[ORACLE] Menambahkan karyawan baru...")
-        print(f"Nama: {name}, Nomor: {employee_number}")
-        cur.execute("""
-            INSERT INTO employees (name, employee_number)
-            VALUES (:name, :empno) RETURNING id INTO :id
-        """, {
-            "name": name,
-            "empno": employee_number,
-            "id": emp_id_var
-        })
-
-        emp_id = int(emp_id_var.getvalue()[0])  # <--- ini diperbaiki
-        print(f"[ORACLE] Insert berhasil. ID: {emp_id}")
-
-        conn.commit()
-        return f"✅ Karyawan '{name}' berhasil ditambahkan dengan ID {emp_id} dan nomor karyawan {employee_number}."
-    except Exception as e:
-        print("[ORACLE ERROR]", traceback.format_exc())
-        return f"❌ Gagal menambahkan karyawan: {e}\n{traceback.format_exc()}"
-    finally:
-        try:
-            cur.close()
-            conn.close()
-        except:
-            pass
-
-@mcp.tool()
-def update_employee_by_id(emp_id: int, updates: dict) -> str:
-    """
-    Memperbarui satu atau lebih field di tabel 'employee_details' berdasarkan nama karyawan.
-    Jika detail belum ada, maka akan ditambahkan.
-
-    Contoh pertanyaan:
-    - Tolong update data Rafael Richie, sekarang jabatannya Software Engineer dan gajinya 10 juta ya.
-    - Saya ingin memperbarui data Rafael Richie. Jenis kelaminnya pria dan status pernikahannya belum menikah.
-    - Ganti email Rafael Richie jadi rafael@company.com dan nomor HP-nya 081234567890.
-    - Update status kepegawaian Rafael Richie jadi kontrak dan alamatnya di Jalan Sudirman No. 12, Jakarta.
-    - Tolong isi password internal Rafael Richie jadi rahasia123 dan dia sudah punya 2 surat peringatan.
-
-    Parameter:
-    - name: Nama lengkap karyawan.
-    - updates: Dict berisi pasangan {nama_kolom: nilai}. 
-      Kolom harus valid sesuai struktur tabel employee_details.
-
-    Contoh penggunaan:
-    name: "Rafael Richie"
-    updates: {
-      "position": "Software Engineer",
-      "gender": "pria",
-      "salary": 10000000
-    }
-
-    🔎 Daftar kolom yang valid di tabel SMARTBOT.employee_details:
-    - position (str): Jabatan atau peran, contoh: "Manager", "Staff".
-    - address (str): Alamat tempat tinggal.
-    - status (str): Status kepegawaian, contoh: "tetap", "kontrak", "magang".
-    - salary (float): Gaji pokok dalam angka, contoh: 8500000.
-    - phone (str): Nomor telepon, harus unik.
-    - email (str): Alamat email, harus unik.
-    - password (str): Kata sandi untuk akses internal.
-    - gender (str): Jenis kelamin, contoh: "pria", "wanita".
-    - marital (str): Status pernikahan, contoh: "menikah", "belum menikah".
-    - sp (int): Jumlah surat peringatan, contoh: 0, 1, 2, 3.
-
-    ❗ Kolom "id" tidak bisa diperbarui secara manual.
-    """
-    try:
-        conn = cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
-        cur = conn.cursor()
-
-        # Validasi kolom
-        cur.execute("SELECT * FROM SMARTBOT.employee_details WHERE ROWNUM = 1")
-        valid_columns = set(desc[0].lower() for desc in cur.description if desc[0].lower() != "id")
-
-        clean_updates = {k: v for k, v in updates.items() if k.lower() in valid_columns}
-        if not clean_updates:
-            return "⚠️ Tidak ada kolom valid yang diperbarui."
-
-        clean_updates["emp_id"] = emp_id
-
-        # Check existence
-        cur.execute("SELECT id FROM SMARTBOT.employee_details WHERE emp_id = :id", {"id": emp_id})
-        exists = cur.fetchone()
-
-        if exists:
-            set_clause = ", ".join(f"{k} = :{k}" for k in clean_updates if k != "emp_id")
-            cur.execute(f"UPDATE SMARTBOT.employee_details SET {set_clause} WHERE emp_id = :emp_id", clean_updates)
-        else:
-            columns = ", ".join(clean_updates.keys())
-            values = ", ".join(f":{k}" for k in clean_updates)
-            cur.execute(f"INSERT INTO SMARTBOT.employee_details ({columns}) VALUES ({values})", clean_updates)
-
-        conn.commit()
-        return f"✅ Data karyawan ID {emp_id} berhasil diperbarui."
-    except Exception as e:
-        return f"❌ Gagal update data ID {emp_id}: {e}\n{traceback.format_exc()}"
-    finally:
-        try:
-            cur.close()
-            conn.close()
-        except:
-            pass
-
-
-@mcp.tool()
-def delete_employee_by_id(emp_id: int) -> str:
-    """
-    Delete employee and all related data by employee ID.
-    """
-    try:
-        conn = cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
-        cur = conn.cursor()
-
-        # Hapus relasi di leaves, absensi, employee_details
-        cur.execute("DELETE FROM SMARTBOT.leaves WHERE emp_id = :id", {"id": emp_id})
-        cur.execute("DELETE FROM SMARTBOT.absensi WHERE emp_id = :id", {"id": emp_id})
-        cur.execute("DELETE FROM SMARTBOT.employee_details WHERE emp_id = :id", {"id": emp_id})
-
-        # Hapus dari employees
-        cur.execute("DELETE FROM SMARTBOT.employees WHERE id = :id", {"id": emp_id})
-
-        conn.commit()
-        return f"✅ Data karyawan ID {emp_id} berhasil dihapus beserta seluruh data terkait."
-    except Exception as e:
-        return f"❌ Gagal menghapus karyawan ID {emp_id}: {e}\n{traceback.format_exc()}"
-    finally:
-        try:
-            cur.close()
-            conn.close()
-        except:
-            pass
-
-
-@mcp.tool()
-def get_all_employees(limit: int = 100) -> str:
-    """
-    Retrieve all employees with basic details (limit 100).
-    """
-    conn = cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
-    cur = conn.cursor()
-
-    query = """
-        SELECT e.id, e.name, d.position, d.status, d.salary, d.phone, d.email, d.gender, d.marital, d.sp
-        FROM SMARTBOT.employees e
-        LEFT JOIN SMARTBOT.employee_details d ON e.id = d.emp_id
-        FETCH FIRST :1 ROWS ONLY
-    """
-    cur.execute(query, [limit])
-    columns = [desc[0] for desc in cur.description]
-    rows = cur.fetchall()
-
-    cur.close()
-    conn.close()
-
-    # Format ke Markdown
-    md = "| " + " | ".join(columns) + " |\n"
-    md += "| " + " | ".join(["---"] * len(columns)) + " |\n"
-    for row in rows:
-        md += "| " + " | ".join(str(cell) if cell is not None else "" for cell in row) + " |\n"
-
-    return md
-
-
+    return _search_employees(query, limit)
 
 
 @mcp.tool()
 def get_employee_by_id(emp_id: int) -> dict:
     """
-    Retrieve single employee and details by employee ID.
+    Mengambil DETAIL LENGKAP satu karyawan spesifik.
+    Gunakan ini setelah mendapatkan ID dari `search_employees`.
+    Output mencakup: Gaji, data pribadi, tanggal bergabung, status pernikahan, BPJS, dll.
     """
-    conn = cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
-    cur = conn.cursor()
-    query = """
-        SELECT e.id, e.name, d.position, d.status, d.salary, d.phone, d.email, d.gender, d.marital, d.sp
-        FROM SMARTBOT.employees e
-        LEFT JOIN SMARTBOT.employee_details d ON e.id = d.emp_id
-        WHERE e.id = :1
-    """
-    cur.execute(query, [emp_id])
-    row = cur.fetchone()
-    cur.close()
-    conn.close()
-    if row:
-        return dict(zip([desc[0] for desc in cur.description], row))
-    else:
-        return {"error": f"Karyawan dengan id {emp_id} tidak ditemukan."}
+    return _get_employee_by_id(emp_id)
+
 
 @mcp.tool()
-def search_employee_by_name(name: str, limit: int = 20) -> dict:
+def get_all_employees(limit: int = 100) -> dict:
     """
-    Search employees by name (partial match).
+    Mengambil daftar semua karyawan (Listing).
+    Berguna untuk melihat ringkasan populasi karyawan.
+    Hanya gunakan jika user meminta "semua karyawan" atau "daftar karyawan".
     """
-    conn = cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
-    cur = conn.cursor()
-    query = """
-        SELECT e.id, e.name, d.position, d.status, d.salary, d.phone, d.email, d.gender, d.marital, d.sp
-        FROM SMARTBOT.employees e
-        LEFT JOIN SMARTBOT.employee_details d ON e.id = d.emp_id
-        WHERE LOWER(e.name) LIKE :1
-        FETCH FIRST :2 ROWS ONLY
-    """
-    cur.execute(query, [f"%{name.lower()}%", limit])
-    columns = [desc[0] for desc in cur.description]
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-    return {"columns": columns, "data": [list(row) for row in rows]}
+    return _get_all_employees(limit)
+
 
 @mcp.tool()
-def search_employee_by_email(email: str, limit: int = 20) -> dict:
+def create_employee(name: str) -> dict:
     """
-    Search employees by email (partial match).
+    Membuat data karyawan BARU (Onboarding).
+    Menerima nama lengkap dan otomatis menghasilkan Employee Code unik.
+    Setelah dibuat, sarankan user untuk melengkapi data lain menggunakan `update_employee_by_id`.
     """
-    conn = cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
-    cur = conn.cursor()
-    query = """
-        SELECT e.id, e.name, d.position, d.status, d.salary, d.phone, d.email, d.gender, d.marital, d.sp
-        FROM SMARTBOT.employees e
-        LEFT JOIN SMARTBOT.employee_details d ON e.id = d.emp_id
-        WHERE LOWER(d.email) LIKE :1
-        FETCH FIRST :2 ROWS ONLY
-    """
-    cur.execute(query, [f"%{email.lower()}%", limit])
-    columns = [desc[0] for desc in cur.description]
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-    return {"columns": columns, "data": [list(row) for row in rows]}
+    return _create_employee(name)
+
 
 @mcp.tool()
-def search_employee_by_phone(phone: str, limit: int = 20) -> dict:
+def update_employee_by_id(emp_id: int, updates: dict) -> dict:
     """
-        Search employees by phone number (partial match).
+    Memperbarui/Edit data karyawan yang sudah ada.
+    Dukungan field: name, email, phone, department, position, status, salary, address, dll.
+    Pastikan emp_id valid sebelum memanggil ini.
+    """
+    return _update_employee_by_id(emp_id, updates)
 
+
+@mcp.tool()
+def delete_employee_by_id(emp_id: int) -> dict:
     """
-    conn = cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
-    cur = conn.cursor()
-    query = """
-        SELECT e.id, e.name, d.position, d.status, d.salary, d.phone, d.email, d.gender, d.marital, d.sp
-        FROM SMARTBOT.employees e
-        LEFT JOIN SMARTBOT.employee_details d ON e.id = d.emp_id
-        WHERE d.phone LIKE :1
-        FETCH FIRST :2 ROWS ONLY
+    MENGHAPUS karyawan secara permanen (Hard Delete).
+    Hati-hati: Aksi ini tidak bisa dibatalkan.
+    Biasanya memerlukan konfirmasi user sebelum eksekusi.
     """
-    cur.execute(query, [f"%{phone}%", limit])
-    columns = [desc[0] for desc in cur.description]
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-    return {"columns": columns, "data": [list(row) for row in rows]}
+    return _delete_employee_by_id(emp_id)
+
 
 @mcp.tool()
 def filter_employees_by_position(position: str, limit: int = 50) -> dict:
-    """
-        Filter employees by job position.
-    """
-    conn = cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
-    cur = conn.cursor()
-    query = """
-        SELECT e.id, e.name, d.position, d.status, d.salary, d.phone, d.email, d.gender, d.marital, d.sp
-        FROM SMARTBOT.employees e
-        JOIN SMARTBOT.employee_details d ON e.id = d.emp_id
-        WHERE LOWER(d.position) LIKE :1
-        FETCH FIRST :2 ROWS ONLY
-    """
-    cur.execute(query, [f"%{position.lower()}%", limit])
-    columns = [desc[0] for desc in cur.description]
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-    return {"columns": columns, "data": [list(row) for row in rows]}
+    """Filter karyawan berdasarkan jabatan/posisi."""
+    return _filter_employees_by_position(position, limit)
+
 
 @mcp.tool()
 def filter_employees_by_status(status: str, limit: int = 50) -> dict:
-    """
-        Filter employees by employment status.
+    """Filter karyawan berdasarkan status kepegawaian (tetap, kontrak, magang)."""
+    return _filter_employees_by_status(status, limit)
 
-    """
-    conn = cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
-    cur = conn.cursor()
-    query = """
-        SELECT e.id, e.name, d.position, d.status, d.salary, d.phone, d.email, d.gender, d.marital, d.sp
-        FROM SMARTBOT.employees e
-        JOIN SMARTBOT.employee_details d ON e.id = d.emp_id
-        WHERE LOWER(d.status) = :1
-        FETCH FIRST :2 ROWS ONLY
-    """
-    cur.execute(query, [status.lower(), limit])
-    columns = [desc[0] for desc in cur.description]
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-    return {"columns": columns, "data": [list(row) for row in rows]}
 
 @mcp.tool()
 def filter_employees_salary_above(min_salary: float, limit: int = 50) -> dict:
-    """
-        Filter employees with salary above threshold.
-    """
-    conn = cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
-    cur = conn.cursor()
-    query = """
-        SELECT e.id, e.name, d.position, d.status, d.salary, d.phone, d.email, d.gender, d.marital, d.sp
-        FROM SMARTBOT.employees e
-        JOIN SMARTBOT.employee_details d ON e.id = d.emp_id
-        WHERE d.salary >= :1
-        FETCH FIRST :2 ROWS ONLY
-    """
-    cur.execute(query, [min_salary, limit])
-    columns = [desc[0] for desc in cur.description]
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-    print({"columns": columns, "data": [list(row) for row in rows]})
+    """Filter karyawan dengan gaji di atas threshold."""
+    return _filter_employees_salary_above(min_salary, limit)
 
-    return {"columns": columns, "data": [list(row) for row in rows]}
 
 @mcp.tool()
 def filter_employees_salary_below(max_salary: float, limit: int = 50) -> dict:
-    """
-        Filter employees with salary below threshold.
+    """Filter karyawan dengan gaji di bawah threshold."""
+    return _filter_employees_salary_below(max_salary, limit)
 
 
-    """
-    conn = cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
-    cur = conn.cursor()
-    query = """
-        SELECT e.id, e.name, d.position, d.status, d.salary, d.phone, d.email, d.gender, d.marital, d.sp
-        FROM SMARTBOT.employees e
-        JOIN SMARTBOT.employee_details d ON e.id = d.emp_id
-        WHERE d.salary <= :1
-        FETCH FIRST :2 ROWS ONLY
-    """
-    cur.execute(query, [max_salary, limit])
-    columns = [desc[0] for desc in cur.description]
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-    print({"columns": columns, "data": [list(row) for row in rows]})
-
-    return {"columns": columns, "data": [list(row) for row in rows]}
-
-@mcp.tool()
-def get_employee_leave_by_id(emp_id: int) -> dict:
-    """
-    Retrieve leave data of employee by ID.
-    """
-    try:
-        with engine.begin() as conn:
-            result = conn.execute(text("SELECT * FROM SMARTBOT.leaves WHERE emp_id = :emp_id"), {"emp_id": emp_id}).fetchone()
-            if result is None:
-                return {"error": "Data cuti tidak ditemukan."}
-            columns = result.keys()
-            return dict(zip(columns, result))
-    except Exception as e:
-        return {"error": str(e)}
-
-@mcp.tool()
-def get_all_employee_leaves(limit: int = 100) -> dict:
-    """
-    Retrieve leave data for all employees.
-
-    Cocok digunakan untuk monitoring HR secara menyeluruh, seperti:
-    - "Lihat semua data cuti karyawan"
-    - "Siapa yang masih punya cuti banyak?"
-
-    Parameter:
-    - limit (int): Jumlah maksimal baris data yang diambil (default 100) untuk mencegah query berat dan error Oracle.
-
-    Output:
-    Dictionary berisi:
-    - columns: Daftar nama kolom.
-    - data: List data karyawan.
-    """
-    try:
-        with engine.begin() as conn:
-            result = conn.execute(text("""
-                SELECT l.id, e.name, l.remaining_leave, l.sick_leave, l.maternity_leave, l.unpaid_leave, l.other_leave
-                FROM SMARTBOT.leaves l
-                JOIN SMARTBOT.employees e ON l.emp_id = e.id
-                FETCH FIRST :limit ROWS ONLY
-            """), {"limit": limit}).fetchall()
-            if not result:
-                return {"columns": [], "data": []}
-            columns = result[0].keys()
-            data = [dict(zip(columns, row)) for row in result]
-            return {"columns": columns, "data": data}
-    except Exception as e:
-        return {"error": str(e), "trace": traceback.format_exc()}
-    
-@mcp.tool()
-def update_leaves(emp_id: int, updates: dict) -> str:
-    """
-    Memperbarui satu atau lebih field cuti pada tabel `leaves` berdasarkan ID karyawan.
-
-    Contoh pertanyaan:
-    - Update cuti pegawai ID 5, sisa cutinya jadi 8, cuti sakitnya jadi 2.
-    - Ubah unpaid_leave karyawan ID 7 jadi 3 hari.
-
-    Parameter:
-    - emp_id (int): ID karyawan.
-    - updates (dict): pasangan {nama_kolom: nilai} yang ingin diubah.
-      Kolom valid:
-        - remaining_leave
-        - sick_leave
-        - maternity_leave
-        - unpaid_leave
-        - other_leave
-
-    ❗ Kolom id dan emp_id tidak bisa diubah.
-
-    Output:
-    Pesan sukses atau error terkait update cuti.
-    """
-    try:
-        with engine.begin() as conn:
-            columns = [col[0].lower() for col in conn.execute(text("SELECT column_name FROM all_tab_columns WHERE table_name = 'LEAVES' AND owner = 'SMARTBOT'"))]
-            valid_updates = {k: v for k, v in updates.items() if k.lower() in columns and k.lower() != "id" and k.lower() != "emp_id"}
-            if not valid_updates:
-                return "⚠️ Tidak ada kolom cuti valid yang diperbarui."
-            set_clause = ", ".join(f"{k} = :{k}" for k in valid_updates)
-            valid_updates["emp_id"] = emp_id
-            conn.execute(text(f"UPDATE SMARTBOT.leaves SET {set_clause} WHERE emp_id = :emp_id"), valid_updates)
-        return f"✅ Data cuti karyawan ID {emp_id} berhasil diperbarui."
-    except Exception as e:
-        return f"❌ Gagal update data cuti ID {emp_id}: {e}\n{traceback.format_exc()}"
-
-@mcp.tool()
-def update_absensi(absen_id: int, updates: dict) -> str:
-    """
-    Memperbarui satu atau lebih field di tabel 'absensi' berdasarkan ID absensi (absen_id).
-    Tool ini digunakan untuk mengoreksi data absensi karyawan apabila terdapat kesalahan lokasi, waktu, atau status remote/terlambat.
-
-    Cocok untuk perintah seperti:
-    - "Tolong perbaiki absensi ID 15, alamatnya diubah ke Jalan Gatot Subroto No. 12."
-    - "Update jarak absensi ID 22 jadi 2.1 km dan status remote-nya diaktifkan."
-    - "Koreksi data absensi ID 30, dia sebenarnya tidak telat."
-
-    Parameter:
-    - absen_id (int): ID unik absensi (primary key dari tabel absensi).
-    - updates (dict): Dictionary berisi pasangan {nama_kolom: nilai} untuk field yang ingin diperbarui.
-
-    Contoh penggunaan:
-    absen_id: 15
-    updates: {
-        "addr": "Jalan Gatot Subroto No. 12",
-        "dist": 1.2,
-        "late": 0
-    }
-
-    🔎 Daftar kolom yang valid di tabel SMARTBOT.absensi:
-    - emp_id (int): ID karyawan (tidak disarankan diubah, kecuali dalam kasus koreksi penginputan).
-    - latitude (float): Koordinat latitude lokasi absen, contoh: -6.200123.
-    - longitude (float): Koordinat longitude lokasi absen, contoh: 106.812345.
-    - addr (str): Alamat teks lokasi absen, contoh: "Jl. Sudirman No.1, Jakarta".
-    - dist (float): Jarak dari kantor (dalam kilometer), contoh: 3.25.
-    - timestamp (datetime): Waktu absen. Format ideal ISO 8601, contoh: "2025-07-16T08:30:00".
-    - late (int): Status keterlambatan, 1 untuk telat, 0 untuk hadir tepat waktu.
-    - remote (int): Status remote, 1 berarti bekerja secara remote, 0 berarti onsite.
-
-    ❗ Kolom 'id' (absen_id) tidak bisa diperbarui secara manual. Tool ini hanya melakukan update berdasarkan ID absensi yang valid.
-
-    Output:
-    ✅ Pesan keberhasilan update, atau ❌ pesan error jika gagal.
-    """
-    try:
-        with engine.begin() as conn:
-            # Ambil semua kolom absensi
-            columns = [col[0].lower() for col in conn.execute(text("""
-                SELECT column_name FROM all_tab_columns
-                WHERE table_name = 'ABSENSI' AND owner = 'SMARTBOT'
-            """))]
-
-            # Validasi updates
-            valid_updates = {
-                k: v for k, v in updates.items()
-                if k.lower() in columns and k.lower() not in ["id"]
-            }
-
-            if not valid_updates:
-                return "⚠️ Tidak ada kolom absensi valid yang diperbarui."
-
-            # Siapkan query update dinamis
-            set_clause = ", ".join(f"{k} = :{k}" for k in valid_updates)
-            valid_updates["absen_id"] = absen_id
-
-            conn.execute(text(f"""
-                UPDATE SMARTBOT.absensi
-                SET {set_clause}
-                WHERE id = :absen_id
-            """), valid_updates)
-
-        return f"✅ Data absensi ID {absen_id} berhasil diperbarui."
-    except Exception as e:
-        return f"❌ Gagal update data absensi ID {absen_id}: {e}\n{traceback.format_exc()}"
+# ============================================================================
+# ATTENDANCE TOOLS
+# ============================================================================
 
 @mcp.tool()
 def get_today_attendance(limit: int = 100) -> dict:
     """
-    Get today’s attendance records.
-
+    Melihat log absensi HARI INI (Real-time).
+    Menampilkan siapa saja yang sudah Check-in, Check-out, atau sedang istirahat hari ini.
     """
-    try:
-        with engine.begin() as conn:
-            result = conn.execute(text("""
-                SELECT a.id, e.name, a.addr, a.dist, a.timestamp, a.late, a.remote
-                FROM SMARTBOT.absensi a
-                JOIN SMARTBOT.employees e ON a.emp_id = e.id
-                WHERE TRUNC(a.timestamp) = TRUNC(SYSDATE)
-                ORDER BY a.timestamp ASC, a.dist ASC
-                FETCH FIRST :limit ROWS ONLY
-            """), {"limit": limit}).fetchall()
-            columns = result[0].keys() if result else []
-            data = [dict(zip(columns, row)) for row in result]
-            return {"columns": columns, "data": data}
-    except Exception as e:
-        return {"error": str(e), "trace": traceback.format_exc()}
+    return _get_today_attendance(limit)
 
 
 @mcp.tool()
 def get_today_late_employees(limit: int = 100) -> dict:
     """
-    List employees who were late today.
-
+    Mencari karyawan yang TERLAMBAT (Late) hari ini.
+    Gunakan untuk monitoring kedisiplinan harian.
     """
-    try:
-        with engine.begin() as conn:
-            result = conn.execute(text("""
-                SELECT e.name, a.timestamp
-                FROM SMARTBOT.absensi a
-                JOIN SMARTBOT.employees e ON a.emp_id = e.id
-                WHERE TRUNC(a.timestamp) = TRUNC(SYSDATE)
-                AND TO_CHAR(a.timestamp, 'HH24:MI') > '08:30'
-                ORDER BY a.timestamp ASC
-                FETCH FIRST :limit ROWS ONLY
-            """), {"limit": limit}).fetchall()
-            columns = result[0].keys() if result else []
-            data = [dict(zip(columns, row)) for row in result]
-            return {"columns": columns, "data": data}
-    except Exception as e:
-        return {"error": str(e), "trace": traceback.format_exc()}
+    return _get_today_late_employees(limit)
 
-@mcp.tool()
-def get_today_distance_over_five_km(limit: int = 100) -> dict:
-    """
-    Get employees who checked in >5 km from office.
-
-    """
-    try:
-        with engine.begin() as conn:
-            result = conn.execute(text("""
-                SELECT e.name, a.addr, a.dist
-                FROM SMARTBOT.absensi a
-                JOIN SMARTBOT.employees e ON a.emp_id = e.id
-                WHERE TRUNC(a.timestamp) = TRUNC(SYSDATE)
-                AND a.dist > 5
-                ORDER BY a.dist DESC
-                FETCH FIRST :limit ROWS ONLY
-            """), {"limit": limit}).fetchall()
-            columns = result[0].keys() if result else []
-            data = [dict(zip(columns, row)) for row in result]
-            return {"columns": columns, "data": data}
-    except Exception as e:
-        return {"error": str(e), "trace": traceback.format_exc()}
 
 @mcp.tool()
 def get_today_remote_employees(limit: int = 100) -> dict:
     """
-    Get employees working remotely today.
-
+    Mencari karyawan yang bekerja REMOTE (WFH) hari ini.
     """
-    try:
-        with engine.begin() as conn:
-            result = conn.execute(text("""
-                SELECT e.name, a.timestamp, a.addr, a.dist
-                FROM SMARTBOT.absensi a
-                JOIN SMARTBOT.employees e ON a.emp_id = e.id
-                WHERE TRUNC(a.timestamp) = TRUNC(SYSDATE)
-                AND a.remote = 1
-                ORDER BY a.timestamp ASC
-                FETCH FIRST :limit ROWS ONLY
-            """), {"limit": limit}).fetchall()
-            columns = result[0].keys() if result else []
-            data = [dict(zip(columns, row)) for row in result]
-            return {"columns": columns, "data": data}
-    except Exception as e:
-        return {"error": str(e), "trace": traceback.format_exc()}
+    return _get_today_remote_employees(limit)
+
 
 @mcp.tool()
 def get_today_onsite_employees(limit: int = 100) -> dict:
     """
-    Get employees working onsite today.
-
+    Mencari karyawan yang bekerja di KANTOR (WFO/Onsite) hari ini.
     """
-    try:
-        with engine.begin() as conn:
-            result = conn.execute(text("""
-                SELECT e.name, a.timestamp, a.addr, a.dist
-                FROM SMARTBOT.absensi a
-                JOIN SMARTBOT.employees e ON a.emp_id = e.id
-                WHERE TRUNC(a.timestamp) = TRUNC(SYSDATE)
-                AND a.remote = 0
-                ORDER BY a.timestamp ASC
-                FETCH FIRST :limit ROWS ONLY
-            """), {"limit": limit}).fetchall()
-            columns = result[0].keys() if result else []
-            data = [dict(zip(columns, row)) for row in result]
-            return {"columns": columns, "data": data}
-    except Exception as e:
-        return {"error": str(e), "trace": traceback.format_exc()}
+    return _get_today_onsite_employees(limit)
+
+
+
+
+
+@mcp.tool()
+def update_absensi(absen_id: int, updates: dict) -> dict:
+    """
+    Koreksi data absensi manual.
+    Gunakan jika ada kesalahan data check-in/check-out atau perubahan status kehadiran.
+    Memerlukan ID Absensi (bukan ID Karyawan).
+    """
+    return _update_absensi(absen_id, updates)
+
+
+# ============================================================================
+# LEAVE TOOLS
+# ============================================================================
+
+@mcp.tool()
+def get_employee_leave_by_id(emp_id: int) -> dict:
+    """Mengambil data cuti karyawan berdasarkan ID karyawan."""
+    return _get_employee_leave_by_id(emp_id)
+
+
+@mcp.tool()
+def get_all_employee_leaves(limit: int = 100) -> dict:
+    """Mengambil data cuti semua karyawan untuk monitoring HR."""
+    return _get_all_employee_leaves(limit)
+
+
+@mcp.tool()
+def update_leaves(emp_id: int, updates: dict) -> dict:
+    """Memperbarui data cuti karyawan."""
+    return _update_leaves(emp_id, updates)
+
+
+# ============================================================================
+# SQL GENERATOR TOOL
+# ============================================================================
+
+@mcp.tool()
+def generate_and_execute_sql(
+    natural_query: str,
+    execute: bool = True,
+    limit: int = 100
+) -> dict:
+    """
+    [ADVANCED] Generator & Eksekutor SQL Oracle Otomatis.
+    Gunakan tool ini sebagai "Senjata Pamungkas" jika tool spesifik lain tidak tersedia. 
+    Sangat ampuh untuk:
+    1. Query Agregasi: Count, Sum, Avg (e.g., "Total gaji per departemen", "Rata-rata cuti").
+    2. Cross-Table Joins: Menghubungkan karyawan dengan absensi, cuti, atau peringatan.
+    3. Filter Kompleks: Kondisi WHERE yang rumit (e.g., "Karyawan tetap yang join > 2 tahun lalu").
+    4. Bulk Updates/Deletes: "Ubah status semua karyawan magang menjadi kontrak".
     
+    Jangan gunakan untuk query simpel yang sudah ada tool-nya (seperti search employee by name).
+    """
+    return _generate_and_execute_sql(natural_query, execute, limit)
+
+
+# ============================================================================
+# UTILITY TOOLS
+# ============================================================================
+
+@mcp.tool()
+def get_current_time() -> dict:
+    """Mengambil waktu dan tanggal saat ini."""
+    return _get_current_time()
+
+
+# ============================================================================
+# MAIN ENTRY POINT
+# ============================================================================
+
 if __name__ == "__main__":
-    mcp.run(transport='sse')
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="HR Agent MCP Server")
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "sse"],
+        default="stdio",
+        help="Transport type: stdio (default) or sse"
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port for SSE transport (default: 8000)"
+    )
+    args = parser.parse_args()
+    
+    print(f"[MCP Server] Starting HR Agent MCP Server with {args.transport} transport...")
+    
+    if args.transport == "sse":
+        mcp.settings.host = "0.0.0.0"
+        mcp.settings.port = args.port
+        print(f"[MCP Server] SSE mode on port {args.port}")
+    
+    mcp.run(transport=args.transport)

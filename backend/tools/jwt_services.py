@@ -8,10 +8,10 @@ import cx_Oracle
 JWT_SECRET = os.getenv("JWT_SECRET")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM")
 
-def verify_jwt(token):
+def decode_token(token):
     try:
         decoded = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        return decoded['sub']
+        return decoded
     except jwt.ExpiredSignatureError:
         raise ValueError("Token kedaluwarsa.")
     except jwt.InvalidTokenError:
@@ -46,7 +46,7 @@ def refresh_access_token(refresh_token: str):
         # Validasi refresh token dengan database
         conn = get_connection()
         cur = conn.cursor()
-        cur.execute("SELECT refresh_token FROM SMARTBOT.users WHERE email = :email", {"email": email})
+        cur.execute("SELECT refresh_token FROM hr_users WHERE email = :email", {"email": email})
         row = cur.fetchone()
 
         if not row:
@@ -76,7 +76,7 @@ def save_tokens(email, access_token, refresh_token):
         conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
-            UPDATE SMARTBOT.users 
+            UPDATE hr_users 
             SET jwt_token = :jwt_token, refresh_token = :refresh_token 
             WHERE email = :email
         """, {

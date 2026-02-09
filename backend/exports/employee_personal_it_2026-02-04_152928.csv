@@ -1,0 +1,4 @@
+employee_code,name,email,phone,department,position,status,address,marital_status,bpjs_number,employment_status,joined_at
+EMP003,Andi Wijaya,andi.wijaya@hr.com,08123456703,IT,Data Analyst,active,"Komp. Gading Serpong, Tangerang",single,12345678903,contract,2025-07-13
+EMP001,Budi Santoso,budi.santoso@hr.com,08123456701,IT,Software Engineer,active,"Jl. Sudirman No. 123, Jakarta Selatan",married,12345678901,permanent,2025-12-07
+EMP002,Dewi Lestari,dewi.lestari@hr.com,08123456702,IT,DevOps Engineer,active,"Jl. Gatot Subroto Kav. 5, Jakarta Selatan",single,12345678902,permanent,2023-12-30

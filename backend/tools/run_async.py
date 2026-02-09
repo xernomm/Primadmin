@@ -1,16 +1,14 @@
 import asyncio
 
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
 
 def run_async(coro):
-    """Helper untuk menjalankan coroutine dengan handling loop."""
+    """Helper untuk menjalankan coroutine dengan handling loop per-thread."""
     try:
-        return loop.run_until_complete(coro)
+        return asyncio.run(coro)
     except RuntimeError as e:
-        if "loop is closed" in str(e):
-            new_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(new_loop)
-            return new_loop.run_until_complete(coro)
-        else:
-            raise
+        # Fallback if we are already in a loop (unlikely with this thread model)
+        if "loops" in str(e):
+             loop = asyncio.new_event_loop()
+             asyncio.set_event_loop(loop)
+             return loop.run_until_complete(coro)
+        raise e

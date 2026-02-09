@@ -16,15 +16,19 @@ ORACLE_SERVICE = os.getenv("ORACLE_SERVICE_NAME")
 # Oracle DSN
 dsn = cx_Oracle.makedsn(ORACLE_HOST, ORACLE_PORT, service_name=ORACLE_SERVICE)
 
-def login_user(email: str, password: str) -> bool:
+def login_user(identifier: str, password: str) -> bool:
     try:
-        conn = cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
+        conn = get_connection()
         cur = conn.cursor()
-        cur.execute("SELECT password FROM SMARTBOT.users WHERE email = :email", {"email": email})
+        # Mendukung login via Email ATAU Username
+        cur.execute("""
+            SELECT password_hash FROM hr_users 
+            WHERE email = :id OR username = :id
+        """, {"id": identifier})
         row = cur.fetchone()
 
         if not row:
-            return False  # Email tidak ditemukan
+            return False
 
         hashed_password = row[0]
         return bcrypt.checkpw(password.encode("utf-8"), hashed_password.encode("utf-8"))
@@ -48,13 +52,59 @@ def logout_user(email: str):
         conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
-            UPDATE SMARTBOT.users 
+            UPDATE hr_users 
             SET jwt_token = NULL, refresh_token = NULL 
             WHERE email = :email
         """, {"email": email})
         conn.commit()
     except Exception as e:
         raise RuntimeError(f"Gagal logout: {e}")
+    finally:
+        cur.close()
+        conn.close()
+
+def get_user_id_by_email(email: str) -> int:
+    """
+    Mengambil ID user berdasarkan email dari tabel hr_users.
+    """
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM hr_users WHERE email = :email", {"email": email})
+        row = cur.fetchone()
+        return row[0] if row else None
+    except Exception:
+        logging.exception("Gagal mengambil user_id by email")
+        return None
+    finally:
+        cur.close()
+        conn.close()
+
+def get_user_by_email(email: str) -> dict:
+    """
+    Mengambil data lengkap user berdasarkan email.
+    """
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, username, email, full_name, role, is_active 
+            FROM hr_users WHERE email = :email
+        """, {"email": email})
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "username": row[1],
+            "email": row[2],
+            "full_name": row[3],
+            "role": row[4],
+            "is_active": bool(row[5])
+        }
+    except Exception:
+        logging.exception("Gagal mengambil data user by email")
+        return None
     finally:
         cur.close()
         conn.close()

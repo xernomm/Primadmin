@@ -1,0 +1,110 @@
+.download-widget {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: #f3f4f6;
+    /* Abu-abu terang */
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    margin: 8px 0;
+    transition: all 0.2s ease;
+}
+
+.download-widget:hover {
+    border-color: #cbd5e1;
+    background: #e2e8f0;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+.download-widget-icon {
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: white;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+}
+
+.download-widget-icon svg {
+    width: 24px;
+    height: 24px;
+}
+
+.download-widget-icon .csv {
+    color: #059669;
+}
+
+.download-widget-icon .excel {
+    color: #16a34a;
+}
+
+.download-widget-icon .pdf {
+    color: #dc2626;
+}
+
+.download-widget-icon .file {
+    color: #4b5563;
+}
+
+.download-widget-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.download-widget-filename {
+    font-weight: 600;
+    font-size: 14px;
+    color: #1e293b;
+    /* Abu-abu gelap/hitam */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.download-widget-size {
+    font-size: 12px;
+    color: #64748b;
+}
+
+.download-widget-button {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    background: #334155;
+    /* Abu-abu gelap untuk tombol default */
+    color: white;
+    /* Tulisan putih */
+    border: none;
+    border-radius: 6px;
+    /* Radius lebih boxy */
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+.download-widget-button:hover {
+    background: #1e293b;
+    /* Lebih gelap saat hover */
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.download-widget-button:active {
+    transform: translateY(0);
+}
+
+.download-widget-button svg {
+    width: 16px;
+    height: 16px;
+}
