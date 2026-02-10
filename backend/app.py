@@ -19,7 +19,8 @@ from chats.chat_service import (
     truncate_chat_history,
     get_conversations_by_email,
     get_messages_by_conversation_id,
-    delete_conversation_by_id
+    delete_conversation_by_id,
+    update_conversation_title
 )
 from chats.processing_service import save_processing_stage, get_processing_stages, clear_processing_stages
 from LLM.bot import get_context_from_rag, store_chat_history
@@ -407,9 +408,21 @@ def handle_chat_message(data):
                         stage_callback=stage_callback
                     ))
                     
-                    # Ensure we send back the ID of the conversation we actually used
                     if isinstance(result, dict):
-                        result["conversation_id"] = result.get("conversation_id", conv_id)
+                        final_conv_id = result.get("conversation_id", conv_id)
+                        result["conversation_id"] = final_conv_id
+                        
+                        # NEW: If this was a new conversation (original conv_id was None/0), update title
+                        if (not conv_id or conv_id <= 0) and final_conv_id:
+                            try:
+                                # Create title from prompt + date
+                                from datetime import datetime
+                                short_prompt = (query[:40] + '...') if len(query) > 40 else query
+                                date_str = datetime.now().strftime("%d/%m %H:%M")
+                                new_title = f"{short_prompt} ({date_str})"
+                                update_conversation_title(final_conv_id, new_title)
+                            except Exception as title_err:
+                                print(f"[TITLE UPDATE ERROR] {title_err}")
                     
                     # FINAL RESPONSE EMIT - Ensure JSON serializable (handle datetime)
                     import json

@@ -153,6 +153,12 @@ Database menggunakan DUA jenis identifier:
 }}
 ```
 
+## Disclaimer PENTING:
+- **CEK vs AKSI**: Bedakan tool untuk MENGECEK (Read) dan MELAKUKAN AKSI (Write).
+  - Contoh: "Cek SP Rafael" -> Gunakan `get_employee_by_id` (Read). JANGAN gunakan `send_warning_letter`.
+  - Contoh: "Kirim SP ke Rafael" -> Gunakan `send_warning_letter` (Write).
+- JANGAN mengirim email/SP jika user hanya bertanya status.
+
 Buat plan sekarang:"""
 
 # ============================================================================
@@ -178,6 +184,7 @@ Berikan respons dengan struktur INTERNAL berikut (JANGAN tulis judul section sep
    - Tabel markdown untuk daftar karyawan/data terstruktur
    - Bullet points untuk informasi ringkas
    - **Bold** untuk angka/nama penting
+   - Konteks informasi **harus** sesuai dengan hasil tools dan tidak boleh mengarang
 3. **Insight/Analisis** (jika ada) - anomali, tren, atau catatan penting
 4. **🎯 Tindakan yang Disarankan** - WAJIB ada jika relevan, berikan 1-3 rekomendasi aksi konkret
 
@@ -251,7 +258,12 @@ Untuk permintaan yang kompleks, JANGAN RAGU menggunakan beberapa tools secara be
 4. **Sintesis**: Gabungkan semua informasi untuk menjawab.
 5. **Eksekusi**: Jika perlu update/create, lakukan di langkah terakhir.
 
+**Bedakan Read vs Write Tools**:
+- Untuk pertanyaan "Cek status", "Lihat data", "Siapa saja": Gunakan Read Tools (get_*, search_*, sql SELECT).
+- HANYA gunakan Write Tools (send_*, update_*, sql UPDATE) jika user secara eksplisit meminta perubahan atau pengiriman.
+
 **Contoh**: "Siapa yang telat hari ini?" -> `get_current_time` -> `get_today_late_employees` -> Jawab.
+
 
 ## Tools yang Tersedia:
 

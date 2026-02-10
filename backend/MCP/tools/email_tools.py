@@ -136,8 +136,18 @@ def send_warning_letter(emp_id: int, reason: str, issued_by: int = 1) -> Dict[st
         emp_id_db, emp_name, emp_email, emp_code, current_sp = row
         current_sp = current_sp or 0
         
+        # Check if already at max level
+        if current_sp >= 3:
+            cur.close()
+            conn.close()
+            return {
+                "success": False,
+                "error": f"Karyawan {emp_name} sudah mencapai level SP3 (Peringatan Terakhir). Tidak dapat mengirimkan SP lebih lanjut. Disarankan untuk memproses PHK sesuai prosedur perusahaan.",
+                "sp_level": current_sp
+            }
+        
         # Calculate new SP level (max 3)
-        new_sp_level = min(current_sp + 1, 3)
+        new_sp_level = current_sp + 1
         sp_type = f"SP{new_sp_level}"
         
         # Get issuer name
@@ -164,7 +174,7 @@ def send_warning_letter(emp_id: int, reason: str, issued_by: int = 1) -> Dict[st
             issuer_name=issuer_name
         )
         
-        # 1. Update DB first (locked in transaction)
+        # 1. Update DB first
         # Update employee sp_level
         cur.execute("""
             UPDATE employees 
@@ -183,20 +193,25 @@ def send_warning_letter(emp_id: int, reason: str, issued_by: int = 1) -> Dict[st
             "issued_by": issued_by
         })
         
-        # 2. Attempt to send email
+        # 2. Commit DB changes FIRST — data is now safe regardless of email outcome
+        conn.commit()
+        
+        # 3. Attempt to send email
         subject = f"Surat Peringatan {new_sp_level} ({sp_type}) - {emp_name}"
         email_sent = _send_email(emp_email, subject, html_content)
         
-        # 3. Finalize transaction based on email result
+        # 4. If email sent, update the warning record
         if email_sent:
-            # Update warning record to show email sent
-            cur.execute("""
-                UPDATE warnings 
-                SET email_sent = 1, email_sent_at = CURRENT_TIMESTAMP 
-                WHERE employee_id = :emp_id AND warning_type = :w_type AND issued_date = TRUNC(SYSDATE)
-            """, {"emp_id": emp_id, "w_type": sp_type})
+            try:
+                cur.execute("""
+                    UPDATE warnings 
+                    SET email_sent = 1, email_sent_at = CURRENT_TIMESTAMP 
+                    WHERE employee_id = :emp_id AND warning_type = :w_type AND issued_date = TRUNC(SYSDATE)
+                """, {"emp_id": emp_id, "w_type": sp_type})
+                conn.commit()
+            except Exception:
+                pass  # Non-critical, email was already sent
             
-            conn.commit()
             cur.close()
             conn.close()
             
@@ -212,15 +227,21 @@ def send_warning_letter(emp_id: int, reason: str, issued_by: int = 1) -> Dict[st
                 "reason": reason
             }
         else:
-            # Email failed - Rollback everything
-            conn.rollback()
+            # Email failed — but DB is already committed (sp_level + warnings saved)
             cur.close()
             conn.close()
             
             return {
-                "success": False, 
-                "error": f"Gagal mengirim email ke {emp_email}. Periksa alamat email atau koneksi server.",
-                "details": "Database update di-rollback karena email gagal."
+                "success": True,
+                "message": f"{sp_type} tercatat di database untuk {emp_name}. SP level dinaikkan ke {new_sp_level}. Namun email gagal terkirim ke {emp_email}.",
+                "employee_name": emp_name,
+                "employee_email": emp_email,
+                "previous_sp_level": current_sp,
+                "new_sp_level": new_sp_level,
+                "sp_type": sp_type,
+                "email_sent": False,
+                "email_error": f"Gagal mengirim email ke {emp_email}. Data SP tetap tersimpan di database.",
+                "reason": reason
             }
         
     except Exception as e:
@@ -393,11 +414,54 @@ def send_broadcast_email(subject: str, message: str, department: str = None) -> 
         return {"success": False, "error": str(e), "trace": traceback.format_exc()}
 
 
+def reset_sp_level(emp_id: int, reason: str = "Pemutihan SP") -> Dict[str, Any]:
+    """
+    Reset SP level employee back to 0.
+    """
+    conn = None
+    cur = None
+    try:
+        conn = _get_connection()
+        cur = conn.cursor()
+
+        # Check employee exists
+        cur.execute("SELECT name FROM employees WHERE id = :emp_id", {"emp_id": emp_id})
+        row = cur.fetchone()
+        
+        if not row:
+            return {"success": False, "error": f"Karyawan dengan ID {emp_id} tidak ditemukan"}
+            
+        emp_name = row[0]
+
+        # Reset SP level
+        cur.execute("UPDATE employees SET sp_level = 0 WHERE id = :emp_id", {"emp_id": emp_id})
+        
+        # Log to warnings table as a reset event (using a special code or just note)
+        cur.execute("""
+            INSERT INTO warnings (employee_id, warning_type, reason, issued_date, issued_by)
+            VALUES (:emp_id, 'RESET', :reason, TRUNC(SYSDATE), 'SYSTEM')
+        """, {"emp_id": emp_id, "reason": reason})
+
+        conn.commit()
+        return {
+            "success": True, 
+            "message": f"SP Level untuk {emp_name} berhasil di-reset ke 0.",
+            "new_sp_level": 0
+        }
+
+    except Exception as e:
+        if conn: conn.rollback()
+        return {"success": False, "error": str(e)}
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
+
 # Tool definitions for agent
 EMAIL_TOOLS = [
     {
         "name": "send_warning_letter",
-        "description": "Kirim Surat Peringatan (SP) ke karyawan. SP = Surat Peringatan/Warning Letter. Level SP auto-increment: SP1→SP2→SP3. SP3 adalah peringatan terakhir sebelum PHK. Tool ini akan update kolom sp_level di database dan mencatat di tabel warnings.",
+        "description": "ACTION TOOL: Mengirim email SP dan menaikkan level SP. JANGAN gunakan untuk sekadar mengecek status. Gunakan get_employee_by_id untuk cek status. SP = Surat Peringatan. Level SP auto-increment: SP1→SP2→SP3.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -461,6 +525,24 @@ EMAIL_TOOLS = [
                 }
             },
             "required": ["subject", "message"]
+        }
+    },
+    {
+        "name": "reset_sp_level",
+        "description": "ACTION TOOL: Mereset level SP karyawan kembali ke 0. Gunakan ini jika SP sebelumnya salah kirim atau ada pemutihan.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "emp_id": {
+                    "type": "integer",
+                    "description": "Database ID karyawan"
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Alasan reset (untuk log audit)"
+                }
+            },
+            "required": ["emp_id", "reason"]
         }
     }
 ]

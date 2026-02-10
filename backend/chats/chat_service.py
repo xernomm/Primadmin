@@ -203,6 +203,29 @@ def update_answer(chat_id: int, answer: str):
         if conn: conn.close()
 
 
+def update_conversation_title(conversation_id: int, title: str):
+    """
+    Update the title of a conversation.
+    """
+    conn = None
+    cur = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute("UPDATE conversations SET title = :title WHERE id = :conv_id", 
+                   {"title": title, "conv_id": conversation_id})
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"❌ Gagal update title: {e}")
+        if conn: conn.rollback()
+        return False
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
+
 def mark_stream_complete(chat_id: int):
     """
     No-op for now unless we add specific status field to messages. 

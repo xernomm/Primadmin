@@ -135,6 +135,29 @@ def execute_safe_sql(sql: str, limit: int = 100) -> Dict[str, Any]:
     sql = sql.strip().rstrip(';').strip()
     sql_upper = sql.upper()
     
+    # Detect unresolved bind parameters (LLM sometimes generates :param_name)
+    bind_params = re.findall(r':([a-zA-Z_]\w*)', sql)
+    # Filter out Oracle keywords that use colon syntax (e.g., timestamps)
+    real_bind_params = [p for p in bind_params if p.upper() not in ('TIMESTAMP', 'DATE', 'NUMBER', 'VARCHAR2', 'CLOB')]
+    if real_bind_params:
+        return {
+            "success": False,
+            "error": f"Query contains unresolved bind parameters: {real_bind_params}. Rewrite using actual literal values instead of :param placeholders.",
+            "query": sql,
+            "executed": False
+        }
+
+    # Detect unresolved {{step_...}} placeholders
+    if "{{" in sql and "}}" in sql:
+        placeholders = re.findall(r'{{.*?}}', sql)
+        if placeholders:
+            return {
+                "success": False,
+                "error": f"Query contains unresolved placeholders: {placeholders}. You must resolve them to actual values before executing.",
+                "query": sql,
+                "executed": False
+            }
+    
     try:
         with engine.begin() as conn:
             if sql_upper.startswith('SELECT'):
@@ -228,6 +251,8 @@ ALLOWED OPERATIONS: SELECT, INSERT, UPDATE, DELETE
 6. **No Boolean Type**: Oracle SQL does not support `TRUE`/`FALSE`. Use `1`/`0` or `'Y'`/ `'N'` if applicable, but check schema constraints.
 7. **Quotes**: Use single quotes `'` for string literals. Double quotes `"` are for identifiers only.
 8. **NO SEMICOLONS**: Do NOT include semicolons at the end of queries. Oracle dynamic SQL rejects them.
+9. **NO BIND PARAMETERS**: Do NOT use `:param_name` syntax (e.g., `:emp_id`, `:name`). Always use actual literal values directly in the query.
+10. **USE ONLY EXISTING TABLES**: Only reference tables shown in the schema above. Do NOT invent or hallucinate table names like 'warning_letters', 'leave_requests', etc.
 
 ## GENERAL RULES
 1. Use proper JOINs (LEFT/INNER) with aliases (e.g., `e` for employees).

@@ -52,8 +52,8 @@ class TestEmailTools(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertEqual(result["new_sp_level"], 1)
         
-        # Verify transaction commit was called
-        mock_conn.commit.assert_called_once()
+        # Verify transaction commit was called (at least once for DB, plus once for email_sent update)
+        mock_conn.commit.assert_called()
         mock_conn.rollback.assert_not_called()
         
         # Verify warnings update (email_sent=1) was executed
@@ -64,7 +64,7 @@ class TestEmailTools(unittest.TestCase):
     @patch('MCP.tools.email_tools.smtplib.SMTP')
     @patch('MCP.tools.email_tools._load_template')
     def test_send_warning_letter_email_failure(self, mock_load_template, mock_smtp, mock_get_conn):
-        """Test warning letter sending failure: rollback should be called."""
+        """Test warning letter when email fails: DB should still commit, result should indicate email failure."""
         # Setup mocks
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
@@ -87,13 +87,15 @@ class TestEmailTools(unittest.TestCase):
         # Execute
         result = email_tools.send_warning_letter(1, "Late")
         
-        # Assertions
-        self.assertFalse(result["success"])
-        self.assertIn("Gagal mengirim email", result["error"])
+        # Assertions: DB changes should persist even when email fails
+        self.assertTrue(result["success"])
+        self.assertEqual(result["new_sp_level"], 1)
+        self.assertFalse(result["email_sent"])
+        self.assertIn("email_error", result)
         
-        # Verify transaction rollback was called
-        mock_conn.rollback.assert_called_once()
-        mock_conn.commit.assert_not_called()
+        # Verify transaction commit was called (DB persists)
+        mock_conn.commit.assert_called()
+        mock_conn.rollback.assert_not_called()
 
 if __name__ == '__main__':
     unittest.main()

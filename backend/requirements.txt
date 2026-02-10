@@ -22,3 +22,5 @@ langchain_mcp_adapters
 langgraph
 langchain_ollama
 PyJWT
+flask-jwt-extended
+flask-socketio

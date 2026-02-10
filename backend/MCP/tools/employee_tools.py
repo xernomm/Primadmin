@@ -44,7 +44,7 @@ def search_employees(query: str, limit: int = 20) -> Dict[str, Any]:
         
         sql = """
             SELECT id, name, employee_code, position, status, 
-                   basic_salary, phone, email, marital_status, department
+                   basic_salary, phone, email, marital_status, department, sp_level
             FROM employees
             WHERE LOWER(name) LIKE :query 
                OR LOWER(email) LIKE :query 
@@ -87,11 +87,11 @@ def get_employee_by_id(emp_id: int) -> Dict[str, Any]:
         sql = """
             SELECT id, name, employee_code, position, address, 
                    status, basic_salary, phone, email, marital_status, department,
-                   remaining_leave, employment_status, joined_at
+                   remaining_leave, employment_status, sp_level, bpjs_number, 
+                   joined_at, created_at, updated_at
             FROM employees
             WHERE id = :emp_id
         """
-        cur.execute(sql, {"emp_id": emp_id})
         cur.execute(sql, {"emp_id": emp_id})
         row = cur.fetchone()
         

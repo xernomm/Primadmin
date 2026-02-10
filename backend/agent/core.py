@@ -41,7 +41,8 @@ RESPONSE_MODEL = "deepseek-r1:latest"        # Response generation
 SQL_MODEL = "qwen2.5-coder:latest"    # SQL-specific model
 
 # Maximum iterations for tool execution loop
-MAX_TOOL_ITERATIONS = 15
+# Maximum iterations for tool execution loop
+MAX_TOOL_ITERATIONS = 50
 
 
 @dataclass
@@ -580,7 +581,11 @@ class HRAgent:
                     result = {"success": False, "error": "Could not resolve employee ID and SQL fallback failed"}
             else:
                 self._update_status(f"Menjalankan {tool_name}...")
-                result = await self._execute_single_tool(tool_name, arguments)
+                
+                # Sanitize arguments before execution to remove any remaining placeholders
+                sanitized_args = self._sanitize_arguments(arguments)
+                
+                result = await self._execute_single_tool(tool_name, sanitized_args)
                 
                 # Check if failed and eligible for SQL fallback
                 if isinstance(result, dict) and not result.get("success") and tool_name in DB_TOOLS:
@@ -703,7 +708,9 @@ class HRAgent:
                 args_desc.append(f"SET {', '.join(set_parts)}")
         
         # Construct the natural language query
-        natural_query = f"{action} {' '.join(args_desc)}"
+        # Sanitize natural query to remove any leaked {{placeholder}} strings
+        raw_query = f"{action} {' '.join(args_desc)}"
+        natural_query = re.sub(r'{{step_\d+\.result\.[^}]+}}', 'Unknown', raw_query)
         
         # If no identifier found, use the full original query context
         if not employee_identifier:
@@ -889,6 +896,22 @@ class HRAgent:
         elif isinstance(data, list):
             return [self._normalize_result_keys(item) for item in data]
         return data
+
+    def _sanitize_arguments(self, args: Any) -> Any:
+        """
+        recursively sanitize arguments by removing unresolved placeholders.
+        """
+        if isinstance(args, str):
+            # If string is JUST a placeholder, return None
+            if re.match(r'^{{step_\d+\.result\..*}}$', args):
+                return None
+            # If string CONTAINS placeholder, strip it
+            return re.sub(r'{{step_\d+\.result\.[^}]+}}', '', args).strip()
+        elif isinstance(args, dict):
+            return {k: self._sanitize_arguments(v) for k, v in args.items()}
+        elif isinstance(args, list):
+            return [self._sanitize_arguments(item) for item in args]
+        return args
     
     def _format_fallback_response(self, state: AgentState) -> str:
         """Format a fallback response from raw tool results."""

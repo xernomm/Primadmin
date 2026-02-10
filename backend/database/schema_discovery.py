@@ -22,6 +22,50 @@ dsn = cx_Oracle.makedsn(ORACLE_HOST, ORACLE_PORT, service_name=ORACLE_SERVICE)
 db_url = f"oracle+cx_oracle://{ORACLE_USER}:{ORACLE_PASSWORD}@{dsn}"
 engine = create_engine(db_url)
 
+# ============================================================================
+# SEMANTIC DESCRIPTIONS for tables and columns
+# These are injected into schema context to help LLM understand table purposes
+# ============================================================================
+
+TABLE_DESCRIPTIONS = {
+    "EMPLOYEES": "Data master karyawan. Menyimpan info personal, jabatan, gaji, status SP (surat peringatan), dan sisa cuti.",
+    "WARNINGS": "Riwayat surat peringatan (SP1/SP2/SP3) yang diberikan ke karyawan. Terhubung ke employees via employee_id. Gunakan tabel ini untuk cek berapa kali karyawan mendapat SP.",
+    "ATTENDANCE": "Data absensi/kehadiran harian karyawan. Satu record per karyawan per hari.",
+    "HR_USERS": "User akun HR yang login ke sistem (bukan karyawan). Menyimpan kredensial login.",
+    "CONVERSATIONS": "Riwayat percakapan chat antara HR user dan assistant.",
+    "MESSAGES": "Pesan individual dalam sebuah conversation.",
+    "DOCUMENTS": "Dokumen yang di-upload untuk RAG system.",
+    "PROCESSING_STAGES": "Internal: tahapan proses agent. JANGAN query tabel ini.",
+}
+
+COLUMN_DESCRIPTIONS = {
+    "EMPLOYEES": {
+        "SP_LEVEL": "Level Surat Peringatan saat ini (0=bersih, 1=SP1, 2=SP2, 3=SP3). SP3 = sebelum PHK/pemecatan.",
+        "REMAINING_LEAVE": "Sisa jatah cuti tahunan (default 12 hari per tahun).",
+        "EMPLOYMENT_STATUS": "Status kepegawaian: 'tetap', 'kontrak', 'magang'.",
+        "STATUS": "Status aktif karyawan: 'active', 'inactive', 'terminated'.",
+        "BASIC_SALARY": "Gaji pokok bulanan dalam Rupiah (IDR).",
+        "EMPLOYEE_CODE": "Kode unik karyawan (e.g. EMP001).",
+        "BPJS_NUMBER": "Nomor BPJS Kesehatan/Ketenagakerjaan.",
+        "MARITAL_STATUS": "Status pernikahan: 'single', 'married', 'divorced'.",
+    },
+    "WARNINGS": {
+        "WARNING_TYPE": "Tipe surat peringatan: 'SP1', 'SP2', atau 'SP3'.",
+        "REASON": "Alasan pemberian surat peringatan.",
+        "ISSUED_DATE": "Tanggal surat peringatan diterbitkan.",
+        "ISSUED_BY": "ID HR user yang menerbitkan SP (FK ke hr_users.id).",
+        "EMAIL_SENT": "Apakah email SP sudah terkirim (1=sudah, 0=belum).",
+        "EMAIL_SENT_AT": "Timestamp kapan email terkirim.",
+    },
+    "ATTENDANCE": {
+        "WORK_LOCATION": "Lokasi kerja: 'WFO' (Work From Office) atau 'WFH' (Work From Home).",
+        "STATUS": "Status kehadiran: 'present', 'late', 'sick', 'absent', 'permit'.",
+        "CHECK_IN": "Waktu jam masuk kerja.",
+        "CHECK_OUT": "Waktu jam pulang kerja.",
+        "ATTENDANCE_DATE": "Tanggal kehadiran (satu record per hari per karyawan).",
+    },
+}
+
 
 class SchemaDiscovery:
     """
@@ -158,17 +202,25 @@ class SchemaDiscovery:
         for table_name, table_info in schema.items():
             lines.append(f"\\n## Table: `{self.schema}.{table_name}`")
             
+            # Add table description if available
+            table_desc = TABLE_DESCRIPTIONS.get(table_name.upper(), "")
+            if table_desc:
+                lines.append(f"*{table_desc}*")
+            
             if 'error' in table_info:
                 lines.append(f"Error: {table_info['error']}")
                 continue
             
             # Columns
             lines.append("\\n**Columns:**")
+            col_descs = COLUMN_DESCRIPTIONS.get(table_name.upper(), {})
             for col in table_info.get('columns', []):
                 nullable = "nullable" if col.get('nullable') else "NOT NULL"
                 pk = " [PRIMARY KEY]" if col.get('primary_key') else ""
                 default = f" (default: {col['default']})" if col.get('default') else ""
-                lines.append(f"- `{col['name']}`: {col['type']} - {nullable}{pk}{default}")
+                col_desc = col_descs.get(col['name'], "")
+                desc_str = f" -- {col_desc}" if col_desc else ""
+                lines.append(f"- `{col['name']}`: {col['type']} - {nullable}{pk}{default}{desc_str}")
             
             # Foreign keys
             if table_info.get('foreign_keys'):
@@ -179,11 +231,17 @@ class SchemaDiscovery:
         return "\\n".join(lines)
     
     def _format_for_sql_generation(self, schema: Dict[str, Dict]) -> str:
-        """SQL-optimized formatting for SQL query generation."""
-        lines = [f"# DATABASE SCHEMA ({self.schema}) - Oracle SQL\\n"]
+        """SQL-optimized formatting for SQL query generation with semantic descriptions."""
+        lines = [f"# DATABASE SCHEMA ({self.schema}) - Oracle SQL"]
+        lines.append("IMPORTANT: Only use tables listed below. Do NOT invent table names.\\n")
         
         for table_name, table_info in schema.items():
-            lines.append(f"\\n## {self.schema}.{table_name}")
+            # Add table description
+            table_desc = TABLE_DESCRIPTIONS.get(table_name.upper(), "")
+            if table_desc:
+                lines.append(f"\\n## {self.schema}.{table_name} -- {table_desc}")
+            else:
+                lines.append(f"\\n## {self.schema}.{table_name}")
             
             if 'error' in table_info:
                 lines.append(f"Error: {table_info['error']}")
@@ -191,12 +249,17 @@ class SchemaDiscovery:
             
             lines.append("```sql")
             col_lines = []
+            col_descs = COLUMN_DESCRIPTIONS.get(table_name.upper(), {})
             for col in table_info.get('columns', []):
                 parts = [f"  {col['name']} {col['type']}"]
                 if col.get('primary_key'):
                     parts.append("PRIMARY KEY")
                 if not col.get('nullable'):
                     parts.append("NOT NULL")
+                # Add column description as SQL comment
+                col_desc = col_descs.get(col['name'], "")
+                if col_desc:
+                    parts.append(f"/* {col_desc} */")
                 col_lines.append(" ".join(parts))
             
             lines.append(",\\n".join(col_lines))
