@@ -21,7 +21,8 @@ async def run_agent(
     conversation_id: Optional[int] = None,
     status_callback: Optional[Callable[[str], None]] = None,
     stage_callback: Optional[Callable[[dict], None]] = None,
-    use_full_pipeline: bool = True
+    use_full_pipeline: bool = True,
+    session_id: Optional[str] = None
 ) -> dict:
     """
     Run the HR Agent with the given input.
@@ -34,6 +35,7 @@ async def run_agent(
         status_callback: Optional callback for status updates
         stage_callback: Optional callback for stage completion data
         use_full_pipeline: Whether to use full 4-stage pipeline (True) or simplified mode
+        session_id: Socket session ID – used for abort/stop support
         
     Returns:
         Dict containing:
@@ -62,19 +64,22 @@ async def run_agent(
             user_id=user_id,
             conversation_id=conversation_id,
             skip_escalation=False,
-            skip_planning=False
+            skip_planning=False,
+            session_id=session_id
         )
     else:
         # Simplified mode: skip escalation and planning
         result = await agent.chat(
-            query=full_input,
+            query=user_input,
             user_id=user_id,
             conversation_id=conversation_id,
             skip_escalation=True,
-            skip_planning=True
+            skip_planning=True,
+            session_id=session_id
         )
     
     return result
+
 
 
 async def run_agent_simple(user_input: str, context: str = "") -> str:

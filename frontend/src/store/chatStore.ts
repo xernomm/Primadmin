@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Message, Conversation } from '../types';
+import type { Message, Conversation, FileAttachment } from '../types';
 import { chatApi } from '../api/chat';
 import { io, Socket } from 'socket.io-client';
 
@@ -22,12 +22,14 @@ interface ChatState {
     error: string | null;
     statusText: string;
     socket: Socket | null;
+    socketId: string | null;  // Current socket session ID (for abort)
     stageDataByConversation: Record<number, StageData[]>;  // For processing block display per conversation
     processingConversationId: number | null;  // Track which conversation is currently processing
 
     initSocket: () => void;
     disconnectSocket: () => void;
-    sendMessage: (content: string, conversationId?: number) => Promise<void>;
+    sendMessage: (content: string, conversationId?: number, fileAttachment?: FileAttachment) => Promise<void>;
+    abortRequest: () => void;  // Stop the current agent run
     loadConversation: (conversationId: number) => Promise<void>;
     loadConversations: () => Promise<void>;
     deleteConversation: (conversationId: number) => Promise<void>;
@@ -45,6 +47,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     error: null,
     statusText: '',
     socket: null,
+    socketId: null,
     stageDataByConversation: {},
     processingConversationId: null,
 
@@ -71,8 +74,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
             reconnectionDelay: 1000
         });
 
-        socket.on('connect', () => console.log('[Socket] Connected:', socket.id));
-        socket.on('disconnect', (reason) => console.log('[Socket] Disconnected:', reason));
+        socket.on('connect', () => {
+            console.log('[Socket] Connected:', socket.id);
+            set({ socketId: socket.id ?? null });
+        });
+        socket.on('disconnect', (reason) => {
+            console.log('[Socket] Disconnected:', reason);
+            set({ socketId: null });
+        });
 
         socket.on('status_update', (data: { status: string }) => {
             set({ statusText: data.status });
@@ -82,14 +91,60 @@ export const useChatStore = create<ChatState>((set, get) => ({
             console.log('[Socket] Stage complete:', data);
             const processingId = get().processingConversationId;
             if (processingId !== null) {
+                set((state) => {
+                    const existing = state.stageDataByConversation[processingId] || [];
+                    // Upsert: replace if same stage number exists (handles retry loops),
+                    // otherwise append
+                    const updated = existing.some(s => s.stage === data.stage)
+                        ? existing.map(s => s.stage === data.stage ? data : s)
+                        : [...existing, data];
+                    return {
+                        stageDataByConversation: {
+                            ...state.stageDataByConversation,
+                            [processingId]: updated
+                        }
+                    };
+                });
+            }
+        });
+
+        // Verification failed → agent is retrying from Stage 1.
+        // Clear current stages and insert a 'reset' sentinel so ProcessingBlock
+        // can render the retry banner, then incoming stage_complete events
+        // will populate the fresh stages below it.
+        socket.on('stage_retry_reset', (data: { retry_attempt: number; message: string }) => {
+            console.log('[Socket] Stage retry reset:', data);
+            const processingId = get().processingConversationId;
+            if (processingId !== null) {
+                const retryBanner: StageData = {
+                    stage: 0,                    // sentinel: 0 = retry indicator
+                    name: `Retry #${data.retry_attempt}`,
+                    content: data.message,
+                    status: 'processing'         // shows spinner briefly
+                };
                 set((state) => ({
                     stageDataByConversation: {
                         ...state.stageDataByConversation,
-                        [processingId]: [...(state.stageDataByConversation[processingId] || []), data]
+                        [processingId]: [retryBanner]  // clear old stages, show banner only
                     }
                 }));
+                // After a short delay, mark the retry banner complete so it collapses
+                setTimeout(() => {
+                    set((state) => {
+                        const current = state.stageDataByConversation[processingId] || [];
+                        return {
+                            stageDataByConversation: {
+                                ...state.stageDataByConversation,
+                                [processingId]: current.map(s =>
+                                    s.stage === 0 ? { ...s, status: 'complete' } : s
+                                )
+                            }
+                        };
+                    });
+                }, 1200);
             }
         });
+
 
         socket.on('error', (data: { message: string }) => {
             const processingId = get().processingConversationId;
@@ -116,7 +171,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
     },
 
-    sendMessage: async (content: string, conversationId?: number) => {
+    sendMessage: async (content: string, conversationId?: number, fileAttachment?: FileAttachment) => {
         // Import getValidToken dynamically to avoid circular deps
         const { getValidToken } = await import('../utils/tokenUtils');
 
@@ -155,6 +210,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             role: 'user',
             content,
             created_at: new Date().toISOString(),
+            ...(fileAttachment ? { file_attachment: fileAttachment } : {}),
         };
 
         const assistantMessageId = Date.now();
@@ -342,6 +398,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
     },
 
     clearError: () => set({ error: null }),
+
+    abortRequest: () => {
+        const { socket, processingConversationId } = get();
+        if (socket?.connected) {
+            socket.emit('abort');  // tell backend to stop
+        }
+        // Reset UI state immediately without waiting for backend
+        set((state) => ({
+            isLoading: false,
+            statusText: '',
+            processingConversationId: null,
+            stageDataByConversation: processingConversationId !== null
+                ? { ...state.stageDataByConversation, [processingConversationId]: [] }
+                : state.stageDataByConversation
+        }));
+    },
 
     clearStageData: (conversationId?: number) => {
         const targetId = conversationId || get().currentConversationId;

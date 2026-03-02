@@ -59,10 +59,12 @@ COLUMN_DESCRIPTIONS = {
     },
     "ATTENDANCE": {
         "WORK_LOCATION": "Lokasi kerja: 'WFO' (Work From Office) atau 'WFH' (Work From Home).",
-        "STATUS": "Status kehadiran: 'present', 'late', 'sick', 'absent', 'permit'.",
-        "CHECK_IN": "Waktu jam masuk kerja.",
+        "STATUS": "Status kehadiran (status_kehadiran): 'present'=hadir, 'late'=terlambat, 'sick'=sakit, 'absent'=tidak hadir, 'permit'=izin.",
+        "CHECK_IN": "Waktu jam masuk kerja. Untuk menghitung KETERLAMBATAN (tidak ada kolom khusus): bandingkan CHECK_IN dengan jam standar masuk (08:00).",
         "CHECK_OUT": "Waktu jam pulang kerja.",
         "ATTENDANCE_DATE": "Tanggal kehadiran (satu record per hari per karyawan).",
+        "NOTES": "Catatan tambahan (catatan_tambahan) terkait kehadiran. Bisa berisi keterangan izin, sakit, dll.",
+        "EMPLOYEE_ID": "FK ke tabel EMPLOYEES.ID. JOIN dengan EMPLOYEES untuk mendapatkan nama karyawan.",
     },
 }
 

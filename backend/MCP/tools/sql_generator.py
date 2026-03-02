@@ -231,6 +231,20 @@ Please refer to the fallback schema definition in schema_discovery.py or check d
 """
 
 
+def get_schema_context() -> dict:
+    """
+    Expose database schema as an MCP tool result.
+    Returns the full Oracle schema (tables + columns + descriptions) as a string.
+    ALWAYS call this tool BEFORE generate_and_execute_sql when planning SQL queries.
+    """
+    schema = get_oracle_schema_context()
+    return {
+        "success": True,
+        "schema": schema,
+        "usage": "Pass the 'schema' value to generate_and_execute_sql as the schema_context parameter."
+    }
+
+
 SQL_GENERATION_PROMPT = """You are an expert Oracle SQL query generator for an HR management system.
 
 Your task: Generate a SAFE, EFFICIENT Oracle SQL query based on the user's request.
@@ -280,13 +294,14 @@ Response: UPDATE employees SET basic_salary = basic_salary * 0.85 WHERE UPPER(na
 Now generate the SQL query for the user's request. Return ONLY the SQL query:"""
 
 
-def generate_sql_with_llm(natural_query: str, model: str = None) -> Dict[str, Any]:
+def generate_sql_with_llm(natural_query: str, model: str = None, schema_context: str = None) -> Dict[str, Any]:
     """
     Generate SQL query using LLM with full Oracle schema context.
     
     Args:
         natural_query: Natural language query
         model: LLM model to use (default: qwen2.5-coder:latest)
+        schema_context: Optional pre-fetched schema string. If None, fetches internally.
         
     Returns:
         Dict with generated SQL and metadata
@@ -294,8 +309,9 @@ def generate_sql_with_llm(natural_query: str, model: str = None) -> Dict[str, An
     if model is None:
         model = SQL_MODEL
     
-    # Get schema context
-    schema_context = get_oracle_schema_context()
+    # Use provided schema or fetch from DB
+    if not schema_context:
+        schema_context = get_oracle_schema_context()
     
     # Build prompt
     prompt = SQL_GENERATION_PROMPT.format(
@@ -361,10 +377,17 @@ def generate_sql_with_llm(natural_query: str, model: str = None) -> Dict[str, An
         }
 
 
+# Alias: generate SQL with pre-fetched schema (no internal DB call needed)
+def generate_sql_with_llm_with_schema(natural_query: str, schema_context: str) -> Dict[str, Any]:
+    """Generate SQL using pre-provided schema string (skip internal schema discovery)."""
+    return generate_sql_with_llm(natural_query, schema_context=schema_context)
+
+
 def generate_and_execute_sql(
     natural_query: str,
     execute: bool = True,
-    limit: int = 100
+    limit: int = 100,
+    schema_context: str = None
 ) -> Dict[str, Any]:
     """
     Convert natural language to SQL using LLM and optionally execute.
@@ -373,12 +396,18 @@ def generate_and_execute_sql(
         natural_query: Natural language query (e.g., "Tampilkan semua karyawan IT")
         execute: Whether to execute the generated SQL (default: True)
         limit: Maximum number of rows to return for SELECT (default: 100)
+        schema_context: Optional pre-fetched schema string from get_schema_context tool.
+                        If provided, skips internal schema discovery (faster + fresher).
         
     Returns:
         Dict with generated SQL and execution results
     """
+    # Use provided schema_context if available, else fetch internally
+    if not schema_context:
+        schema_context = get_oracle_schema_context()
+
     # Generate SQL using LLM
-    generation_result = generate_sql_with_llm(natural_query)
+    generation_result = generate_sql_with_llm_with_schema(natural_query, schema_context)
     
     if not generation_result.get("success"):
         return generation_result
@@ -403,8 +432,20 @@ def generate_and_execute_sql(
     return result
 
 
-# Tool definition for agent
+# Tool definitions for agent
 SQL_TOOLS = [
+    {
+        "name": "get_schema_context",
+        "description": """Mengambil skema database Oracle (tabel + kolom + deskripsi) sebagai konteks untuk SQL generator.
+
+⚠️ WAJIB dipanggil SEBELUM generate_and_execute_sql sebagai depends_on.
+Output: field 'schema' berisi schema string yang harus dioper ke generate_and_execute_sql sebagai parameter schema_context.""",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
     {
         "name": "generate_and_execute_sql",
         "description": """[ADVANCED] Generator & Eksekutor SQL Oracle Otomatis.
@@ -415,6 +456,7 @@ Sangat ampuh untuk:
 3. Filter Kompleks: Kondisi WHERE yang rumit (e.g., "Karyawan tetap yang join > 2 tahun lalu").
 4. Bulk Updates/Deletes: "Ubah status semua karyawan magang menjadi kontrak".
 
+⚠️ WAJIB: Selalu tambahkan step get_schema_context sebelum tool ini dan gunakan hasilnya sebagai schema_context.
 Jangan gunakan untuk query simpel yang sudah ada tool-nya (seperti search employee by name).
 """,
         "parameters": {
@@ -433,6 +475,10 @@ Jangan gunakan untuk query simpel yang sudah ada tool-nya (seperti search employ
                     "type": "integer",
                     "description": "Maximum number of rows to return for SELECT queries (default: 100)",
                     "default": 100
+                },
+                "schema_context": {
+                    "type": "string",
+                    "description": "Schema string dari hasil get_schema_context (field 'schema'). Wajib diisi jika ada step get_schema_context sebelumnya."
                 }
             },
             "required": ["natural_query"]

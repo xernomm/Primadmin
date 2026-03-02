@@ -54,6 +54,31 @@ from .export_tools import (
     export_employee_operational_data,
     EXPORT_TOOLS
 )
+from .payroll_tools import (
+    get_payroll_detail,
+    get_payroll_info,
+    analyze_payroll_anomaly,
+    export_payroll_csv,
+    get_payroll_file,
+    create_payroll_report_pdf,
+    send_payroll_email,
+    PAYROLL_TOOLS
+)
+from .cv_tools import (
+    get_employee_cv,
+    analyze_employee_cv,
+    summarize_employee_cv,
+    manage_cv_file,
+    extract_cv_from_file,
+    CV_TOOLS
+)
+from .filesystem_tools import (
+    read_file,
+    write_file,
+    rename_file,
+    delete_file,
+    FILESYSTEM_TOOLS
+)
 
 # Collect all tool definitions
 ALL_TOOLS = []
@@ -65,6 +90,9 @@ ALL_TOOLS.extend(UTILITY_TOOLS)
 ALL_TOOLS.extend(EMAIL_TOOLS)
 ALL_TOOLS.extend(ANALYSIS_TOOLS)
 ALL_TOOLS.extend(EXPORT_TOOLS)
+ALL_TOOLS.extend(PAYROLL_TOOLS)
+ALL_TOOLS.extend(CV_TOOLS)
+ALL_TOOLS.extend(FILESYSTEM_TOOLS)
 
 __all__ = [
     # Employee tools
@@ -111,6 +139,28 @@ __all__ = [
     'export_employee_personal_data',
     'export_employee_operational_data',
     'EXPORT_TOOLS',
+    # Payroll tools
+    'get_payroll_detail',
+    'get_payroll_info',
+    'analyze_payroll_anomaly',
+    'export_payroll_csv',
+    'get_payroll_file',
+    'create_payroll_report_pdf',
+    'send_payroll_email',
+    'PAYROLL_TOOLS',
+    # CV tools
+    'get_employee_cv',
+    'analyze_employee_cv',
+    'summarize_employee_cv',
+    'manage_cv_file',
+    'CV_TOOLS',
+    # Filesystem tools
+    'list_directory',
+    'read_file',
+    'write_file',
+    'rename_file',
+    'delete_file',
+    'FILESYSTEM_TOOLS',
     # Combined
     'ALL_TOOLS'
 ]

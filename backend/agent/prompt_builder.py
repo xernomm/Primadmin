@@ -107,7 +107,7 @@ class PromptBuilder:
     
     def build_for_escalation(self, user_query: str, conversation_history: List[Dict] = None) -> List[Dict[str, str]]:
         """Build messages for Stage 1 (prompt escalation) with conversation context."""
-        from .prompt_templates import PROMPT_ESCALATION_TEMPLATE
+        from .prompt_templates import PROMPT_ESCALATION_TEMPLATE, get_compact_tool_catalog
         
         # Format conversation context
         context_text = "(Tidak ada percakapan sebelumnya - ini adalah pertanyaan baru)"
@@ -121,9 +121,13 @@ class PromptBuilder:
                 context_lines.append(f"**{role_label}**: {content}")
             context_text = "\n".join(context_lines)
         
+        # Inject compact tool catalog so Stage 1 can recommend relevant tools
+        tool_catalog = get_compact_tool_catalog()
+        
         prompt = PROMPT_ESCALATION_TEMPLATE.format(
             user_query=user_query,
-            conversation_context=context_text
+            conversation_context=context_text,
+            tool_catalog=tool_catalog
         )
         return [{"role": "user", "content": prompt}]
     
@@ -131,16 +135,57 @@ class PromptBuilder:
         self,
         intent: str,
         entities: Dict,
-        expanded_query: str
+        expanded_query: str,
+        tool_hints: list = None
     ) -> List[Dict[str, str]]:
-        """Build messages for Stage 2 (tool planning)."""
+        """Build messages for Stage 2 (tool planning).
+        
+        Args:
+            intent: Parsed intent from Stage 1
+            entities: Extracted entities from Stage 1
+            expanded_query: Expanded query from Stage 1
+            tool_hints: Optional list of tool names recommended by Stage 1.
+                        When provided, those tools get full schema in the prompt;
+                        other tools are shown name-only to reduce context noise.
+        """
         from .prompt_templates import TOOL_PLANNING_TEMPLATE, get_tool_summary
         
         prompt = TOOL_PLANNING_TEMPLATE.format(
             intent=intent,
             entities=str(entities),
             expanded_query=expanded_query,
-            tool_descriptions=get_tool_summary()
+            tool_descriptions=get_tool_summary(tool_hints=tool_hints)
+        )
+        return [{"role": "user", "content": prompt}]
+    
+    def build_for_verification(
+        self,
+        original_query: str,
+        intent: str,
+        tool_results: List[Dict],
+        retry_count: int = 0
+    ) -> List[Dict[str, str]]:
+        """Build messages for Stage 4 (verification)."""
+        from .prompt_templates import VERIFICATION_TEMPLATE
+        import json
+        from datetime import datetime, date
+        
+        def json_serializer(obj):
+            if isinstance(obj, (datetime, date)):
+                return obj.isoformat()
+            return str(obj)
+            
+        # Format tool results
+        results_text = ""
+        for i, result in enumerate(tool_results, 1):
+            results_text += f"\n### Tool {i}: {result.get('tool', 'unknown')}\n"
+            results_text += f"```json\n{json.dumps(result.get('result', {}), indent=2, ensure_ascii=False, default=json_serializer)}\n```\n"
+        
+        prompt = VERIFICATION_TEMPLATE.format(
+            original_query=original_query,
+            intent=intent,
+            tool_results=results_text,
+            retry_count=retry_count
         )
         return [{"role": "user", "content": prompt}]
     

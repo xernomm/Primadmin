@@ -13,6 +13,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from config import CV_DIR, PAYROLL_EXPORTS_DIR, BASE_URL
+
 ORACLE_USER = os.getenv("ORACLE_USER")
 ORACLE_PASSWORD = os.getenv("ORACLE_PASSWORD")
 ORACLE_HOST = os.getenv("ORACLE_HOST")
@@ -73,17 +78,19 @@ def search_employees(query: str, limit: int = 20) -> Dict[str, Any]:
 def get_employee_by_id(emp_id: int) -> Dict[str, Any]:
     """
     Retrieve single employee and details by employee ID.
+    Also includes CV file info (file_path, education, skills) from employee_cv table.
     
     Args:
         emp_id: Employee ID
         
     Returns:
-        Employee dict or error
+        Employee dict with cv_info sub-dict, or error
     """
     try:
         conn = _get_connection()
         cur = conn.cursor()
         
+        # Main employee data
         sql = """
             SELECT id, name, employee_code, position, address, 
                    status, basic_salary, phone, email, marital_status, department,
@@ -95,22 +102,53 @@ def get_employee_by_id(emp_id: int) -> Dict[str, Any]:
         cur.execute(sql, {"emp_id": emp_id})
         row = cur.fetchone()
         
-        if row:
-            columns = [desc[0] for desc in cur.description]
-            result = {}
-            for col, val in zip(columns, row):
-                if isinstance(val, cx_Oracle.LOB):
-                    result[col] = val.read()
-                else:
-                    result[col] = val
-            
-            cur.close()
-            conn.close()
-            return {"success": True, "data": result}
-        else:
+        if not row:
             cur.close()
             conn.close()
             return {"success": False, "error": f"Karyawan dengan ID {emp_id} tidak ditemukan."}
+
+        columns = [desc[0] for desc in cur.description]
+        result = {}
+        for col, val in zip(columns, row):
+            if isinstance(val, cx_Oracle.LOB):
+                result[col] = val.read()
+            else:
+                result[col] = val
+
+        # Also fetch CV info (file path + key fields)
+        try:
+            cur.execute("""
+                SELECT file_path, education_level, education_institution, education_major,
+                       skills, certifications, work_experience, 
+                       current_position, current_department, current_salary,
+                       bank_name, bank_account_number, bank_account_name,
+                       ktp_number, npwp_number, blood_type, religion,
+                       notes
+                FROM employee_cv
+                WHERE employee_id = :emp_id
+            """, {"emp_id": emp_id})
+            cv_row = cur.fetchone()
+            if cv_row:
+                cv_cols = [desc[0] for desc in cur.description]
+                cv_data = {}
+                for col, val in zip(cv_cols, cv_row):
+                    if isinstance(val, cx_Oracle.LOB):
+                        cv_data[col] = val.read()
+                    else:
+                        cv_data[col] = val
+                result["CV_FILE_PATH"] = cv_data.get("FILE_PATH")  # top-level for easy access
+                result["cv_info"] = cv_data
+            else:
+                result["CV_FILE_PATH"] = None
+                result["cv_info"] = None
+        except Exception:
+            result["CV_FILE_PATH"] = None
+            result["cv_info"] = None
+
+        cur.close()
+        conn.close()
+        return {"success": True, "data": result}
+
     except Exception as e:
         return {"success": False, "error": str(e), "trace": traceback.format_exc()}
 
@@ -199,42 +237,151 @@ def create_employee(name: str) -> Dict[str, Any]:
         return {"success": False, "error": str(e), "trace": traceback.format_exc()}
 
 
+# Columns that belong to the employee_cv table (not employees)
+CV_TABLE_COLUMNS = {
+    "education_level", "education_institution", "education_major", "graduation_year",
+    "certifications", "skills", "work_experience",
+    "current_position", "current_department", "current_salary",
+    "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relation",
+    "blood_type", "religion", "ktp_number", "npwp_number",
+    "bank_name", "bank_account_number", "bank_account_name",
+    "deduction_bpjs_kesehatan", "deduction_bpjs_ketenagakerjaan",
+    "deduction_meal", "deduction_transport", "deduction_insurance",
+    "deduction_laptop_installment", "deduction_laptop_remaining_months",
+    "deduction_other", "deduction_other_description", "total_monthly_deductions",
+    "notes", "file_path"
+}
+
+
 def update_employee_by_id(emp_id: int, updates: Dict[str, Any]) -> Dict[str, Any]:
     """
     Update employee details by ID.
+    Supports fields from both the 'employees' table and the 'employee_cv' table.
     
     Args:
         emp_id: Employee ID
         updates: Dict of field names and values to update
         
-    Valid fields: position, address, status, salary, phone, email, 
-                  gender, marital, sp
+    Valid employees fields: position, address, status, basic_salary, phone, email,
+                            marital_status, department, employment_status, sp_level,
+                            remaining_leave, bpjs_number, joined_at
+    Valid employee_cv fields: education_level, education_institution, education_major,
+                              graduation_year, certifications, skills, work_experience,
+                              current_position, current_department, current_salary,
+                              emergency_contact_name, emergency_contact_phone,
+                              emergency_contact_relation, blood_type, religion,
+                              ktp_number, npwp_number, bank_name, bank_account_number,
+                              bank_account_name, deduction_bpjs_kesehatan,
+                              deduction_bpjs_ketenagakerjaan, deduction_meal,
+                              deduction_transport, deduction_insurance,
+                              deduction_laptop_installment, deduction_laptop_remaining_months,
+                              deduction_other, deduction_other_description,
+                              total_monthly_deductions, notes
         
     Returns:
         Dict with success status and message
     """
+    # Guard: updates must be a non-empty dict
+    if not isinstance(updates, dict) or not updates:
+        return {
+            "success": False,
+            "error": "Parameter 'updates' harus berupa dict yang tidak kosong. Pastikan field dan nilai yang ingin diupdate sudah ditentukan."
+        }
+    
+    # Oracle ORA-01484 fix: Ensure no lists/arrays are passed as bound values to standard SQL
+    # Convert lists to comma-separated strings
+    for k, v in updates.items():
+        if isinstance(v, list):
+            updates[k] = ", ".join(map(str, v))
+
     try:
         conn = _get_connection()
         cur = conn.cursor()
         
-        # Get valid columns
+        # --- Separate updates for employees table vs employee_cv table ---
+        cv_updates = {k: v for k, v in updates.items() if k.lower() in CV_TABLE_COLUMNS}
+        
+        # Get valid columns for employees table (dynamically)
         cur.execute("SELECT * FROM employees WHERE ROWNUM = 1")
-        valid_columns = set(desc[0].lower() for desc in cur.description if desc[0].lower() not in ["id", "employee_code"])
+        valid_emp_columns = set(
+            desc[0].lower() for desc in cur.description
+            if desc[0].lower() not in ["id", "employee_code"]
+        )
+        emp_updates = {k: v for k, v in updates.items() if k.lower() in valid_emp_columns}
         
-        clean_updates = {k: v for k, v in updates.items() if k.lower() in valid_columns}
-        if not clean_updates:
-            return {"success": False, "error": "Tidak ada kolom valid yang diperbarui."}
+        if not emp_updates and not cv_updates:
+            cur.close()
+            conn.close()
+            return {"success": False, "error": "Tidak ada kolom valid yang diperbarui. Periksa nama field yang diberikan."}
         
-        clean_updates["emp_id"] = emp_id
+        messages = []
         
-        set_clause = ", ".join(f"{k} = :{k}" for k in clean_updates if k != "emp_id")
-        cur.execute(f"UPDATE employees SET {set_clause} WHERE id = :emp_id", clean_updates)
+        # --- Update employees table ---
+        if emp_updates:
+            emp_updates["emp_id"] = emp_id
+            set_clause = ", ".join(f"{k} = :{k}" for k in emp_updates if k != "emp_id")
+            cur.execute(f"UPDATE employees SET {set_clause} WHERE id = :emp_id", emp_updates)
+            messages.append(f"{len(emp_updates) - 1} field tabel employees")
+        
+        # --- Update employee_cv table ---
+        if cv_updates:
+            # Check if CV record exists
+            cur.execute("SELECT id FROM employee_cv WHERE employee_id = :eid", {"eid": emp_id})
+            cv_row = cur.fetchone()
+            
+            if cv_row:
+                cv_updates["emp_id"] = emp_id
+                set_clause = ", ".join(f"{k} = :{k}" for k in cv_updates if k != "emp_id")
+                set_clause += ", updated_at = CURRENT_TIMESTAMP"
+                cur.execute(f"UPDATE employee_cv SET {set_clause} WHERE employee_id = :emp_id", cv_updates)
+                messages.append(f"{len(cv_updates) - 1} field tabel employee_cv")
+            else:
+                # Insert minimal CV record with the given fields
+                cv_updates["employee_id"] = emp_id
+                cols = ", ".join(cv_updates.keys())
+                placeholders = ", ".join(f":{k}" for k in cv_updates.keys())
+                cur.execute(f"INSERT INTO employee_cv ({cols}) VALUES ({placeholders})", cv_updates)
+                messages.append(f"{len(cv_updates) - 1} field tabel employee_cv (record baru dibuat)")
         
         conn.commit()
+
+        # -- Re-fetch actual committed values so Stage 4 can verify without hallucinating --
+        updated_data = {}
+        try:
+            if emp_updates:
+                fields = [k for k in emp_updates if k != "emp_id"]
+                cur.execute(
+                    f"SELECT {', '.join(fields)} FROM employees WHERE id = :eid",
+                    {"eid": emp_id}
+                )
+                row = cur.fetchone()
+                if row:
+                    for i, field in enumerate(fields):
+                        val = row[i]
+                        updated_data[field] = val.read() if hasattr(val, "read") else val
+            if cv_updates:
+                cv_fields = [k for k in cv_updates if k not in ("emp_id", "employee_id")]
+                if cv_fields:
+                    cur.execute(
+                        f"SELECT {', '.join(cv_fields)} FROM employee_cv WHERE employee_id = :eid",
+                        {"eid": emp_id}
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        for i, field in enumerate(cv_fields):
+                            val = row[i]
+                            updated_data[field] = val.read() if hasattr(val, "read") else val
+        except Exception:
+            pass  # non-critical
+
         cur.close()
         conn.close()
-        
-        return {"success": True, "message": f"Data karyawan ID {emp_id} berhasil diperbarui."}
+
+        return {
+            "success": True,
+            "message": f"Data karyawan ID {emp_id} berhasil diperbarui: {', '.join(messages)}.",
+            "updated_fields": updated_data  # actual values now in DB — source of truth for verification
+        }
     except Exception as e:
         return {"success": False, "error": str(e), "trace": traceback.format_exc()}
 
@@ -427,7 +574,96 @@ def filter_employees_salary_below(max_salary: float, limit: int = 50) -> Dict[st
         return {"success": False, "error": str(e), "trace": traceback.format_exc()}
 
 
-# Tool definitions for agent
+def get_employee_files(emp_id: int) -> Dict[str, Any]:
+    """
+    Ambil daftar semua file penting yang terkait satu karyawan:
+    - File CV (dari employee_cv.file_path + download_url)
+    - File slip gaji/payroll (dari payroll_slips.file_path + download_url)
+
+    Args:
+        emp_id: Database ID karyawan
+
+    Returns:
+        Dict berisi list file CV dan payroll dengan server_url dan abs_path.
+        Gunakan abs_path untuk extract_cv_from_file.
+    """
+    try:
+        conn = _get_connection()
+        cur = conn.cursor()
+
+        # Verify employee exists
+        cur.execute("SELECT name FROM employees WHERE id = :emp_id", {"emp_id": emp_id})
+        emp = cur.fetchone()
+        if not emp:
+            cur.close(); conn.close()
+            return {"success": False, "error": f"Karyawan dengan ID {emp_id} tidak ditemukan."}
+
+        emp_name = emp[0]
+        files = {}
+
+        # --- CV file (from employee_cv table) ---
+        cur.execute(
+            "SELECT file_path, download_url FROM employee_cv WHERE employee_id = :eid",
+            {"eid": emp_id}
+        )
+        cv_row = cur.fetchone()
+        if cv_row:
+            cv_abs = cv_row[0]  # absolute path stored in DB
+            cv_url = cv_row[1]  # server URL stored in DB
+            cv_exists = Path(str(cv_abs)).exists() if cv_abs else False
+
+            # Build server URL if download_url not stored yet
+            if not cv_url and cv_abs:
+                filename = Path(str(cv_abs)).name
+                cv_url = f"{BASE_URL}/uploads/cv/{filename}"
+
+            files["cv"] = {
+                "filename": Path(str(cv_abs)).name if cv_abs else None,
+                "abs_path": str(cv_abs) if cv_abs else None,
+                "server_url": cv_url,
+                "exists": cv_exists,
+            }
+        else:
+            files["cv"] = None
+
+        # --- Payroll slip files (from payroll_slips table) ---
+        cur.execute("""
+            SELECT period_month, period_year, file_path, download_url, status
+            FROM payroll_slips
+            WHERE employee_id = :eid
+            ORDER BY period_year DESC, period_month DESC
+            FETCH FIRST 12 ROWS ONLY
+        """, {"eid": emp_id})
+        payroll_rows = cur.fetchall()
+        payroll_files = []
+        for row in payroll_rows:
+            month, year, fp, du, st = row
+            abs_path = str(fp) if fp else None
+            server_url = du if du else (f"{BASE_URL}/uploads/payroll/{Path(fp).name}" if fp else None)
+            payroll_files.append({
+                "period": f"{year}-{str(month).zfill(2)}",
+                "filename": Path(str(fp)).name if fp else None,
+                "abs_path": abs_path,
+                "server_url": server_url,
+                "exists": Path(str(fp)).exists() if fp else False,
+                "status": st,
+            })
+        files["payroll_slips"] = payroll_files
+
+        cur.close(); conn.close()
+
+        return {
+            "success": True,
+            "employee_id": emp_id,
+            "employee_name": emp_name,
+            "files": files,
+            "hint": "Gunakan 'abs_path' dari files.cv atau files.payroll_slips sebagai file_path di extract_cv_from_file / get_payroll_file."
+        }
+
+    except Exception as e:
+        return {"success": False, "error": str(e), "trace": traceback.format_exc()}
+
+
 # IMPORTANT: Parameter names MUST match function signatures exactly!
 # - 'id' = internal database ID (auto-generated integer)
 # - 'employee_code' = business identifier/NIK (string like "2026-01-15-123")
@@ -455,7 +691,7 @@ EMPLOYEE_TOOLS = [
     },
     {
         "name": "get_employee_by_id",
-        "description": "Mengambil DETAIL LENGKAP satu karyawan. WAJIB dipanggil setelah search_employees untuk mendapatkan informasi lengkap seperti gaji, alamat, BPJS, sisa cuti, dll. Parameter: emp_id (integer dari hasil search).",
+        "description": "Mengambil DETAIL LENGKAP satu karyawan. WAJIB dipanggil setelah search_employees untuk mendapatkan informasi lengkap seperti gaji, alamat, BPJS, sisa cuti, dll. PENTING: Output juga menyertakan 'CV_FILE_PATH' (path file CV, gunakan sebagai file_path di extract_cv_from_file) dan 'cv_info' (data profil CV: pendidikan, skill, sertifikasi, dll). Gunakan {{step_N.result.data.CV_FILE_PATH}} untuk file_path di step berikutnya.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -498,7 +734,7 @@ EMPLOYEE_TOOLS = [
     },
     {
         "name": "update_employee_by_id",
-        "description": "Update data karyawan. HARUS gunakan emp_id (database ID integer), BUKAN employee_code. Field valid: position, address, status, basic_salary, phone, email, marital_status, department.",
+        "description": "Update data karyawan (tabel employees DAN employee_cv). HARUS gunakan emp_id (database ID integer), BUKAN employee_code. Field tabel employees: position, address, status, basic_salary, phone, email, marital_status, department, employment_status, sp_level, remaining_leave, bpjs_number. Field tabel employee_cv: education_level, education_institution, education_major, graduation_year, certifications, skills, work_experience, current_position, current_department, current_salary, emergency_contact_name, emergency_contact_phone, emergency_contact_relation, blood_type, religion, ktp_number, npwp_number, bank_name, bank_account_number, bank_account_name, deduction_bpjs_kesehatan, deduction_bpjs_ketenagakerjaan, deduction_meal, deduction_transport, deduction_insurance, deduction_laptop_installment, deduction_laptop_remaining_months, deduction_other, deduction_other_description, total_monthly_deductions, notes.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -508,7 +744,7 @@ EMPLOYEE_TOOLS = [
                 },
                 "updates": {
                     "type": "object",
-                    "description": "Object berisi field dan nilai baru. Contoh: {\"position\": \"Manager\", \"basic_salary\": 15000000}"
+                    "description": "Object berisi field dan nilai baru. Contoh: {\"position\": \"Manager\", \"basic_salary\": 15000000, \"skills\": \"Python, SQL\"}"
                 }
             },
             "required": ["emp_id", "updates"]
@@ -602,6 +838,25 @@ EMPLOYEE_TOOLS = [
                 }
             },
             "required": ["max_salary"]
+        }
+    },
+    {
+        "name": "get_employee_files",
+        "description": (
+            "Ambil daftar semua file penting milik satu karyawan: file CV (dari employee_cv) "
+            "dan slip gaji/payroll (dari payroll_slips). Mengembalikan 'abs_path' dan 'server_url' "
+            "untuk setiap file. WAJIB dipanggil sebelum extract_cv_from_file atau get_payroll_file "
+            "agar path file yang digunakan AKURAT — jangan hardcode path atau tebak nama file."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "emp_id": {
+                    "type": "integer",
+                    "description": "Database ID karyawan (integer dari search_employees)."
+                }
+            },
+            "required": ["emp_id"]
         }
     }
 ]

@@ -43,25 +43,59 @@ export default function ProcessingBlock({ stages, currentStatus }: ProcessingBlo
     const [expandedStages, setExpandedStages] = useState<{ [key: number]: boolean }>({});
     const animationRefs = useRef<{ [key: number]: NodeJS.Timeout | null }>({});
 
-    // Typing animation for each stage
+    // When a retry reset happens (stage 0 present), clear old animation state
+    useEffect(() => {
+        const hasRetryBanner = stages.some(s => s.stage === 0);
+        if (hasRetryBanner) {
+            // Cancel all running animations
+            Object.values(animationRefs.current).forEach(timer => {
+                if (timer) clearInterval(timer);
+            });
+            animationRefs.current = {};
+            setDisplayedContent({});
+            setExpandedStages({});
+        }
+    }, [stages.some(s => s.stage === 0)]);
+
+    const mountedRef = useRef(true);
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => {
+            mountedRef.current = false;
+            // Only clear timers on actual unmount
+            Object.values(animationRefs.current).forEach(timer => {
+                if (timer) clearInterval(timer);
+            });
+        };
+    }, []);
+
+    // Typing animation for each stage (skip stage 0 — retry banner)
     useEffect(() => {
         stages.forEach((stage) => {
-            if (stage.status === 'complete' && !displayedContent[stage.stage]) {
-                // Start typing animation for this stage
-                let charIndex = 0;
+            if (stage.stage === 0) return; // retry banner has no typing animation
+
+            const alreadyDisplayed = displayedContent[stage.stage] ?? '';
+            const isFullyDisplayed = alreadyDisplayed === stage.content;
+
+            // Start or resume animation if stage is complete and not yet fully displayed
+            if (stage.status === 'complete' && !isFullyDisplayed) {
+                // Resume from where we left off (or start from 0 if nothing displayed yet)
+                let charIndex = alreadyDisplayed.length;
                 const fullContent = stage.content;
 
-                // Clear any existing animation
+                // Clear any existing animation for this stage only
                 if (animationRefs.current[stage.stage]) {
                     clearInterval(animationRefs.current[stage.stage]!);
                 }
 
                 animationRefs.current[stage.stage] = setInterval(() => {
+                    if (!mountedRef.current) return;
                     charIndex += 8; // Speed: 8 chars at a time for faster display
                     if (charIndex >= fullContent.length) {
                         charIndex = fullContent.length;
                         if (animationRefs.current[stage.stage]) {
                             clearInterval(animationRefs.current[stage.stage]!);
+                            animationRefs.current[stage.stage] = null;
                         }
                     }
                     setDisplayedContent(prev => ({
@@ -71,23 +105,23 @@ export default function ProcessingBlock({ stages, currentStatus }: ProcessingBlo
                 }, 5); // 5ms interval for faster typing
             }
         });
-
-        return () => {
-            Object.values(animationRefs.current).forEach(timer => {
-                if (timer) clearInterval(timer);
-            });
-        };
+        // No cleanup here — individual intervals are cleared when complete,
+        // and all intervals are cleared on unmount via the separate useEffect above.
     }, [stages]);
 
     // Toggle stage expansion
     const toggleExpand = (stageNum: number) => {
-        setExpandedStages(prev => ({ ...prev, [stageNum]: !prev[stageNum] }));
+        setExpandedStages(prev => ({ ...prev, [stageNum]: !(prev[stageNum] ?? true) }));
     };
 
     if (stages.length === 0 && !currentStatus) return null;
 
+    // Separate retry banner (stage 0) from regular stages
+    const retryBanner = stages.find(s => s.stage === 0);
+    const regularStages = stages.filter(s => s.stage !== 0);
+
     return (
-        <div className="processing-block glass-glow rounded-xl p-4 mb-4 animate-fade-in">
+        <div className="processing-block glass-glow rounded-xl p-4 mb-4 animate-fade-in w-full max-w-full">
             {/* Header */}
             <div className="flex items-center gap-2 mb-3 pb-2 border-b border-white/10">
                 <div className="relative flex h-2.5 w-2.5">
@@ -100,15 +134,41 @@ export default function ProcessingBlock({ stages, currentStatus }: ProcessingBlo
             </div>
 
             {/* Stages */}
-            <div className="space-y-3">
-                {stages.map((stage) => {
+            <div className="space-y-3 w-full">
+
+                {/* ── Retry Banner (stage 0) ── */}
+                {retryBanner && (
+                    <div className={`
+                        flex items-center gap-2 px-3 py-2 rounded-lg
+                        border animate-fade-in
+                        ${retryBanner.status === 'processing'
+                            ? 'bg-amber-500/10 border-amber-500/40 animate-pulse-subtle'
+                            : 'bg-amber-500/5 border-amber-500/20'}
+                    `}>
+                        <span className={`text-base ${retryBanner.status === 'processing' ? 'animate-spin-slow' : ''}`}>
+                            ↺
+                        </span>
+                        <div>
+                            <span className="text-xs font-semibold text-amber-400 uppercase tracking-wider">
+                                {retryBanner.name}
+                            </span>
+                            <p className="text-xs text-amber-300/70 mt-0.5">{retryBanner.content}</p>
+                        </div>
+                        {retryBanner.status === 'processing' && (
+                            <div className="spinner-mini ml-auto border-amber-400/60" />
+                        )}
+                    </div>
+                )}
+
+                {/* ── Regular Stages ── */}
+                {regularStages.map((stage) => {
                     const currentContent = displayedContent[stage.stage] || '';
                     const { thinking, main } = parseThinkingContent(currentContent);
                     const isExpanded = expandedStages[stage.stage] ?? true;
                     const hasThinking = thinking.length > 0;
 
                     return (
-                        <div key={stage.stage} className="stage-item">
+                        <div key={stage.stage} className="stage-item animate-fade-in w-full min-w-0">
                             {/* Stage Header */}
                             <div
                                 className="flex items-center gap-2 mb-1 cursor-pointer hover:opacity-80"
@@ -123,7 +183,7 @@ export default function ProcessingBlock({ stages, currentStatus }: ProcessingBlo
                                         stage.status === 'error' ? '✗' : stage.stage}
                                 </div>
                                 <span className="text-sm font-medium text-zinc-200">
-                                    Stage {stage.stage}: {stage.name}
+                                    {stage.name}
                                 </span>
                                 {stage.status === 'processing' && (
                                     <div className="spinner-mini ml-auto" />
@@ -137,7 +197,7 @@ export default function ProcessingBlock({ stages, currentStatus }: ProcessingBlo
 
                             {/* Stage Content */}
                             {isExpanded && (currentContent || stage.status === 'processing') && (
-                                <div className="ml-7 mt-1 space-y-2">
+                                <div className="mt-1 space-y-2 w-full min-w-0 pl-7">
                                     {stage.status === 'processing' ? (
                                         <div className="p-2 rounded-lg bg-black/20 border border-white/5">
                                             <div className="flex items-center gap-2 text-xs text-zinc-400">
@@ -156,7 +216,7 @@ export default function ProcessingBlock({ stages, currentStatus }: ProcessingBlo
                                                         <span>🧠</span>
                                                         <span>Thinking...</span>
                                                     </div>
-                                                    <div className="text-xs text-zinc-400 max-h-48 overflow-y-auto font-mono whitespace-pre-wrap">
+                                                    <div className="text-xs text-zinc-400 max-h-48 overflow-y-auto overflow-x-hidden font-mono whitespace-pre-wrap break-all">
                                                         {thinking}
                                                         {currentContent.length < stage.content.length && (
                                                             <span className="inline-block w-1 h-3 bg-violet-500 ml-0.5 animate-pulse" />
@@ -167,8 +227,8 @@ export default function ProcessingBlock({ stages, currentStatus }: ProcessingBlo
 
                                             {/* Main Content Block */}
                                             {main && (
-                                                <div className="p-2 rounded-lg bg-black/20 border border-white/5">
-                                                    <div className="prose prose-invert prose-xs max-w-none text-zinc-300">
+                                                <div className="p-2 rounded-lg bg-black/20 border border-white/5 w-full">
+                                                    <div className="prose prose-invert prose-xs max-w-none text-zinc-300 break-all [&_pre]:whitespace-pre-wrap [&_pre]:break-all [&_code]:break-all">
                                                         <ReactMarkdown remarkPlugins={[remarkGfm]}>
                                                             {main}
                                                         </ReactMarkdown>
@@ -198,7 +258,7 @@ export default function ProcessingBlock({ stages, currentStatus }: ProcessingBlo
                 )}
 
                 {/* Show next stage loading indicator */}
-                {stages.length > 0 && stages.every(s => s.status === 'complete') && currentStatus && (
+                {regularStages.length > 0 && regularStages.every(s => s.status === 'complete') && currentStatus && (
                     <div className="flex items-center gap-2 text-sm text-zinc-400 mt-2">
                         <div className="spinner-mini" />
                         <span>{currentStatus}</span>

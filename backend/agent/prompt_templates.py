@@ -12,159 +12,226 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # ============================================================================
 # STAGE 1: PROMPT ESCALATION TEMPLATE
 # ============================================================================
-PROMPT_ESCALATION_TEMPLATE = """Kamu adalah HR Query Analyzer yang EXECUTION-FOCUSED. Tugasmu adalah menganalisis dan meng-extract semua informasi dari query user untuk dieksekusi.
+PROMPT_ESCALATION_TEMPLATE = """Analisis query HR berikut dan ekstrak semua informasi yang dibutuhkan.
 
-## Konteks Percakapan Sebelumnya
+## Query User
+{user_query}
+
+## Konteks Percakapan
 {conversation_context}
 
-## Input Terbaru dari User
-User Query: {user_query}
+## Tools yang Tersedia
+{tool_catalog}
 
-## ATURAN KRITIS - WAJIB DIIKUTI
+## Aturan Ekstraksi
 
-### 1. JANGAN PERNAH MINTA KLARIFIKASI untuk:
-- Keputusan perusahaan (pengurangan gaji, promosi, demosi, PHK)
-- Alasan di balik kebijakan (user sudah punya otoritas)
-- Konfirmasi apakah user "yakin" atau tidak
-- Hal-hal yang sudah jelas disebutkan user
+1. **JANGAN minta klarifikasi** — langsung ekstrak dan proses
+2. **Ekstrak semua nilai** — nama, gaji, persentase, email, jabatan, dll
+3. **Hitung multiplier** — "naik 15%" → salary_multiplier: 1.15 | "kurangi 10%" → 0.90
+4. **File attachment** — jika ada path file dilampirkan, isi attachment_file_path
+5. **recommended_tools** — sarankan tools dari atas sebanyak-banyaknya yang relevan dengan pertanyaan user.
+6. **Waktu/tanggal nyata** — jika query menyebut "hari ini", "sekarang", "bulan ini", "minggu ini", atau konteks waktu apapun, WAJIB sertakan `get_current_time` di `recommended_tools`. JANGAN tebak tanggal.
+7. **Data DB nyata** — jika query membutuhkan data yang belum jelas ada atau tidak (misal: file CV, slip gaji, daftar karyawan), sertakan `list_directory` atau `generate_and_execute_sql` di `recommended_tools` agar agent dapat mengkonfirmasi data nyata dari sistem, bukan mengarang.
 
-### 2. LANGSUNG EKSTRAK SEMUA NILAI yang disebutkan user:
-- Nama karyawan (lama dan baru jika ada perubahan)
-- Email (lama dan baru)
-- Gaji/salary (nilai atau persentase perubahan)
-- Posisi/jabatan
-- Departemen
-- Status pernikahan
-- Alamat
-- Nomor telepon
-- Persentase (misal: "kurangi 15%" → multiplier: 0.85)
+## Output JSON
 
-### 3. CONTOH EKSTRAKSI YANG BENAR:
-Query: "Kurangi gaji Rafael Richie 15% dan export data operasional"
-Entities yang harus di-extract:
-- employee_name: "Rafael Richie"
-- salary_multiplier: 0.85 (karena dikurangi 15%)
-- action: "update_salary"
-- export_type: "operational"
-
-Query: "Update data Budi: email jadi budi@newmail.com, jabatan Manager"
-Entities:
-- employee_name: "Budi"
-- new_email: "budi@newmail.com"
-- new_position: "Manager"
-
-## Format Output (JSON) - WAJIB LENGKAP
 ```json
 {{
-  "intent": "deskripsi singkat apa yang user mau (tanpa bertanya balik)",
+  "intent": "Deskripsi singkat apa yang diminta user dan untuk siapa",
+  "action_type": "read/write/analyze/export/composite",
+  "scope": {{
+    "target": "single_employee/multiple_employees/department/company_wide",
+    "specific_names": ["nama jika ada"]
+  }},
   "entities": {{
-    "employee_name": "nama karyawan yang disebutkan",
-    "new_name": "nama baru jika ada perubahan nama",
-    "new_email": "email baru jika disebutkan",
-    "new_phone": "nomor telepon baru jika disebutkan",
-    "new_position": "posisi/jabatan baru jika disebutkan",
-    "new_department": "departemen baru jika disebutkan",
-    "new_salary": "gaji baru (angka) jika disebutkan langsung",
-    "salary_multiplier": "multiplier gaji (0.85 untuk -15%, 1.10 untuk +10%)",
-    "new_status": "status baru jika disebutkan",
-    "new_address": "alamat baru jika disebutkan",
-    "new_marital_status": "status pernikahan baru jika disebutkan",
-    "export_type": "personal/operational jika minta export"
+    "employee_name": "nama karyawan",
+    "salary_multiplier": "misal 1.15 untuk +15%, 0.85 untuk -15%",
+    "new_salary": "angka gaji baru jika disebutkan langsung",
+    "new_position": "jabatan baru jika ada",
+    "new_department": "departemen baru jika ada",
+    "new_email": "email baru jika ada",
+    "new_phone": "nomor baru jika ada",
+    "new_status": "status baru jika ada",
+    "new_address": "alamat baru jika ada",
+    "new_marital_status": "status pernikahan baru jika ada",
+    "export_type": "personal/operational jika minta export",
+    "warning_letter_type": "SP1/SP2/SP3 jika terkait SP",
+    "leave_type": "annual/sick/emergency jika terkait cuti",
+    "date_range": "range waktu jika ada",
+    "attachment_file_path": "path absolut file jika ada lampiran",
+    "cv_action": "upload/replace jika ada attachment"
+  }},
+  "temporal_context": {{
+    "time_reference": "today/this_week/this_month/none",
+    "requires_current_time": false
+  }},
+  "expected_output": {{
+    "format": "table/list/summary/confirmation/export_file",
+    "detail_level": "basic/detailed/comprehensive"
+  }},
+  "data_requirements": {{
+    "basic_info": true,
+    "salary_info": false,
+    "leave_info": false,
+    "attendance_info": false,
+    "historical_data": false
   }},
   "needs_clarification": false,
   "clarification_question": null,
-  "expanded_query": "query lengkap dengan semua nilai yang di-extract, siap untuk dieksekusi"
+  "recommended_tools": ["search_employees", "update_employee_by_id"],
+  "expanded_query": "Query detail yang menjelaskan: apa, siapa, data apa yang dibutuhkan, dan output format yang diharapkan. PENTING: JANGAN sebutkan nama kolom database spesifik — deskripsikan data yang dibutuhkan dalam bahasa alami (contoh: 'data status kehadiran, info keterlambatan, dan catatan' — BUKAN 'kolom status_kehadiran, keterlambatan, catatan_tambahan'). SQL generator yang akan menentukan kolom yang tepat berdasarkan schema database."
 }}
 ```
-
-INGAT: Kamu EKSEKUTOR, bukan VALIDATOR. User sudah punya otoritas untuk keputusan mereka. JANGAN BERTANYA, LANGSUNG EXTRACT DAN PROSES.
 
 Analisis query sekarang:"""
 
 # ============================================================================
 # STAGE 2: TOOL PLANNING TEMPLATE
 # ============================================================================
-TOOL_PLANNING_TEMPLATE = """Kamu adalah HR Tool Planner yang akurat dan teliti. Tugasmu adalah menentukan tools yang tepat untuk menjalankan request user.
+TOOL_PLANNING_TEMPLATE = """Buat rencana eksekusi tool untuk request HR berikut.
 
 ## Context
-User Intent: {intent}
+Intent: {intent}
 Entities: {entities}
-Expanded Query: {expanded_query}
+Query Detail: {expanded_query}
 
-## PENTING: Aturan Penamaan Parameter
-Database menggunakan DUA jenis identifier:
-- `id` atau `emp_id` = Database ID internal (INTEGER, auto-generated)
-- `employee_code` = Nomor karyawan/NIK (STRING seperti "2026-01-15-123")
-
-**WAJIB**: Semua tool yang membutuhkan ID karyawan menggunakan parameter `emp_id` (integer), BUKAN `employee_id`!
-
-## Available Tools dengan Parameter Schema
+## Tools
 {tool_descriptions}
 
-## Strategi Multi-Tool untuk Informasi Lengkap
-
-### Untuk Query Detail Karyawan:
-1. `search_employees(query)` → dapatkan `id`
-2. `get_employee_by_id(emp_id)` → detail lengkap (gaji, alamat, dll)
-3. `get_employee_leave_by_id(emp_id)` → info cuti (opsional)
-
-### Untuk Query Update Data:
-1. `search_employees(query)` → dapatkan `id` dari nama
-2. `update_employee_by_id(emp_id, updates)` → update dengan ID yang didapat
-
-### Untuk Query Statistik/Agregasi:
-- Gunakan `generate_and_execute_sql` untuk query kompleks seperti COUNT, AVG, GROUP BY
-
-### Untuk EXPORT / EKSPOR / DOWNLOAD DATA:
-**WAJIB gunakan export tools jika user meminta:**
-- "export data karyawan" → `export_employee_personal_data`
-- "ekspor data" / "download csv" / "rekap karyawan ke file" → `export_employee_personal_data`
-- "export absensi" / "rekap operasional" → `export_employee_operational_data`
-- JANGAN gunakan `generate_and_execute_sql` atau tools lain untuk request export/ekspor!
-
 ## Aturan Wajib
-1. **Nama → ID Chain**: Jika user menyebut NAMA karyawan, WAJIB panggil `search_employees` dulu untuk mendapatkan `id`
-2. **Parameter Eksak**: Gunakan nama parameter PERSIS seperti schema (`emp_id`, bukan `employee_id`)
-3. **Maksimalkan Informasi**: Untuk pertanyaan detail, gunakan BEBERAPA tools untuk data komprehensif
-4. **Waktu**: Jika pertanyaan berkaitan dengan "hari ini"/"sekarang", panggil `get_current_time`
-5. **Export CSV**: Jika user menyebut "export", "ekspor", "download", "CSV", atau "rekap ke file", SELALU gunakan `export_employee_personal_data` atau `export_employee_operational_data`
+1. **Nama → ID**: Jika ada nama karyawan, SELALU mulai dengan `search_employees` untuk dapatkan `emp_id`
+2. **emp_id bukan employee_id**: Parameter ID karyawan selalu `emp_id` (integer)
+3. **Waktu**: Jika pertanyaan tentang "hari ini/sekarang", panggil `get_current_time` di awal
+4. **Verifikasi write**: Setelah update/create, ambil data terbaru untuk konfirmasi
+5. **Export**: Untuk request export/download/CSV → `export_employee_personal_data` atau `export_employee_operational_data`
+6. **CV read**: Untuk profil/keahlian/pengalaman/sertifikasi → `get_employee_cv` atau `summarize_employee_cv`
+7. **CV upload**: Jika ada `attachment_file_path` → `manage_cv_file` lalu `extract_cv_from_file`
+8. **CEK vs AKSI**: Jangan kirim email/SP jika user hanya bertanya status
+9. **LARANGAN CHAIN analyze→update**: `analyze_employee_cv` dan `summarize_employee_cv` hanya menghasilkan TEKS NARATIF — outputnya TIDAK BOLEH digunakan sebagai `updates` untuk `update_employee_by_id`. Jika user ingin update data CV, field dan nilainya HARUS diambil langsung dari query user (via entities), bukan dari hasil analisis. Jangan buat step `update_employee_by_id` dengan `updates: {{{{step_N.result.anything}}}}` jika step N adalah analyze/summarize.
+10. **SQL SCHEMA WAJIB**: Jika plan menggunakan `generate_and_execute_sql`, WAJIB tambahkan step `get_schema_context` SEBELUMNYA dan jadikan sebagai `depends_on`. Argumen `schema_context` di `generate_and_execute_sql` harus diisi dengan `{{{{step_N.result.schema}}}}` dari step `get_schema_context`. Ini memastikan SQL generator mengetahui nama tabel dan kolom yang tepat. Contoh:
+    ```
+    {{"step": N, "name": "get_schema_context", "args": {{}}, "reason": "ambil schema DB untuk SQL generator", "depends_on": null}}
+    {{"step": N+1, "name": "generate_and_execute_sql", "args": {{"natural_query": "...", "schema_context": "{{{{step_N.result.schema}}}}"}}, "depends_on": N}}
+    ```
+11. **CV FILE WORKFLOW WAJIB**: Untuk operasi yang melibatkan file CV karyawan (`extract_cv_from_file`), WAJIB susun chain berikut:
+    ```
+    Step A: search_employees → dapat emp_id
+    Step B: get_employee_files(emp_id=step_A.result.id) → dapat abs_path file CV
+    Step C: extract_cv_from_file(emp_id=step_A.result.id, file_path=step_B.result.files.cv.abs_path) → mengembalikan field 'data'
+    Step D: update_employee_by_id(emp_id=step_A.result.id, updates={{step_C.result.data}})
+    ```
+    JANGAN hardcode path file. JANGAN gunakan list_directory (tool sudah dihapus). SELALU gunakan abs_path dari get_employee_files.
+12. **LANGCHAIN COMPATIBILITY**: Selalu gunakan key `name` (untuk nama tool) dan `args` (untuk argument tool). Ini penting agar response mudah dipahami oleh LangChain MCP adapter.
+13. **SCOPE TOOLS — LARANGAN KRITIS**: 
+    - Plan HANYA boleh menggunakan tools yang ada dalam daftar tool yang tersedia.
+    - DILARANG mereferensikan tool yang tidak ada dalam daftar (contoh: search_payroll, get_leaves_history, dll).
+    - `completion_checklist` HANYA boleh berisi kondisi yang BISA diverifikasi dari output tools dalam plan ini.
+    - DILARANG membuat checklist item yang memerlukan data yang tidak diambil oleh tools manapun dalam plan.
 
-## Format Output (JSON)
+## Format Output JSON (SANGAT KETAT)
+Kamu WAJIB mengembalikan JSON murni dengan struktur berikut. Perhatikan bahwa key untuk daftar langkah harus bernama `"plan"` dan isinya berupa **ARRAY of OBJECTS** (BUKAN array of strings).
+
 ```json
 {{
-  "reasoning": "penjelasan singkat mengapa memilih tools ini",
+  "reasoning": "alasan singkat memilih tools ini",
   "plan": [
     {{
       "step": 1,
-      "tool": "search_employees",
-      "arguments": {{"query": "nama_karyawan"}},
-      "reason": "cari ID dari nama",
+      "name": "search_employees",
+      "args": {{"query": "nama_karyawan"}},
+      "reason": "dapatkan emp_id dari nama",
       "depends_on": null
     }},
     {{
       "step": 2,
-      "tool": "get_employee_by_id",
-      "arguments": {{"emp_id": "{{{{step_1.result.id}}}}"}},
-      "reason": "ambil detail lengkap dengan ID dari step 1",
+      "name": "get_employee_files",
+      "args": {{"emp_id": "{{{{step_1.result.id}}}}"}},
+      "reason": "dapatkan path file CV",
       "depends_on": 1
+    }},
+    {{
+      "step": 3,
+      "name": "extract_cv_from_file",
+      "args": {{"emp_id": "{{{{step_1.result.id}}}}", "file_path": "{{{{step_2.result.files.cv.abs_path}}}}"}},
+      "reason": "ekstrak file cv",
+      "depends_on": 2
+    }},
+    {{
+      "step": 4,
+      "name": "update_employee_by_id",
+      "args": {{"emp_id": "{{{{step_1.result.id}}}}", "updates": "{{{{step_3.result.data}}}}"}},
+      "reason": "simpan data hasil ekstrasi ke database karyawan",
+      "depends_on": 3
     }}
   ],
-  "can_execute": true
+  "can_execute": true,
+  "completion_checklist": [
+    "Kondisi spesifik yang harus terpenuhi agar intent user terjawab"
+  ]
 }}
 ```
 
-## Disclaimer PENTING:
-- **CEK vs AKSI**: Bedakan tool untuk MENGECEK (Read) dan MELAKUKAN AKSI (Write).
-  - Contoh: "Cek SP Rafael" -> Gunakan `get_employee_by_id` (Read). JANGAN gunakan `send_warning_letter`.
-  - Contoh: "Kirim SP ke Rafael" -> Gunakan `send_warning_letter` (Write).
-- JANGAN mengirim email/SP jika user hanya bertanya status.
-
 Buat plan sekarang:"""
 
+
 # ============================================================================
-# STAGE 4: RESPONSE GENERATION TEMPLATE
+# STAGE 4: VERIFICATION TEMPLATE
 # ============================================================================
-RESPONSE_GENERATION_TEMPLATE = """Kamu adalah HR Agent profesional. Berikan respons yang informatif, padat, dan actionable berdasarkan hasil tools.
+VERIFICATION_TEMPLATE = """Kamu adalah Verification Agent. Tugasmu adalah mengecek apakah SEMUA kebutuhan user sudah terpenuhi berdasarkan hasil eksekusi tools.
+
+## Pertanyaan Asli User
+{original_query}
+
+## Intent yang Diparsing
+{intent}
+
+## Hasil Eksekusi Tools
+{tool_results}
+
+## Retry Info
+Retry ke: {retry_count} dari maksimal 2
+
+## Instruksi Verifikasi
+
+Lakukan analisis secara utuh terhadap hasil yang didapat dibandingkan dengan pertanyaan asli user:
+1. Apakah informasi yang diminta oleh pertanyaan asli user SUDAH didapatkan dari hasil eksekusi tools?
+2. Jika ada informasi yang terlewat (missing), apa sebenarnya yang masih di-request namun belum ada hasilnya?
+3. Jangan pernah membuat asumsi kondisi baru di luar pertanyaan asli user.
+
+### ⚠️ ATURAN PENTING — JANGAN ABAIKAN:
+
+**A. Percayai \`updated_fields\` sebagai bukti nyata DB:**
+- Jika tool update (update_employee_by_id, update_leaves, dll) mengembalikan `"success": true` DAN `"updated_fields": {{...}}`, nilai di `updated_fields` adalah nilai AKTUAL yang tersimpan di database.
+- JANGAN hitung ulang atau ragukan nilai tersebut. `updated_fields` adalah sumber kebenaran (source of truth).
+
+**B. Percayai \`success: true\` untuk operasi tulis:**
+- Jika sebuah write tool mengembalikan `"success": true`, operasi SUDAH berhasil dieksekusi dan di-commit ke database.
+
+**C. Jangan gagalkan karena data opsional atau field tambahan:**
+- Jika SQL query mengembalikan field LEBIH dari yang diminta, itu VALID dan tidak perlu dipermasalahkan.
+- Jangan jadikan sebuah proses FAIL untuk hal yang tidak secara eksplisit di-request user.
+
+**D. SCOPE VERIFIKASI — HANYA evaluasi dari hasil tools yang ada saat ini:**
+- Jika ada hal yang gagal, instruksikan pendekatan BEDA, BUKAN kembali mengulang tools yang sama jika terbukti hasilnya tidak berhasil atau sudah berhasil tapi datanya kurang.
+- Kriteria PASS: Intent asli user terjawab.
+- Kriteria FAIL: Intent utama user ada yang tidak terjawab atau write statement mengembalikan success: false.
+
+## Format Output (JSON)
+```json
+{{
+  "all_satisfied": true/false,
+  "analysis": "Analisa naratif apakah hasil eksekusi tools sudah benar-benar menjawab intent user. Sebutkan apa yang berhasil didapatkan tanpa menggunakan poin-poin.",
+  "missing_info": "Penjelasan konkrit informasi spesifik apa yang belum terjawab (isi dengan null jika all_satisfied: true)",
+  "retry_instructions": "Hanya diisi jika all_satisfied: false. Berikan usulan tools alternatif spesifik atau cara BEDA agar kelemahan pada eksekusi sebelumnya dapat diatasi. Jangan sarankan mengulang hal yang sama. (isi dengan null jika all_satisfied: true)"
+}}
+```
+
+Verifikasi sekarang:"""
+
+# ============================================================================
+# STAGE 5: RESPONSE GENERATION TEMPLATE
+# ============================================================================
+RESPONSE_GENERATION_TEMPLATE = """Buat respons HR yang tepat sasaran berdasarkan hasil tools berikut.
 
 ## Pertanyaan User
 {original_query}
@@ -172,49 +239,22 @@ RESPONSE_GENERATION_TEMPLATE = """Kamu adalah HR Agent profesional. Berikan resp
 ## Konteks Percakapan
 {conversation_context}
 
-## Hasil Eksekusi Tools
+## Hasil Tools
 {tool_results}
 
-## Panduan Format Response
+## Aturan
+1. **Gunakan HANYA data dari tool results** — jangan mengarang, **TAMPILKAN DATA SELENGKAP-LENGKAPNYA**
+2. **Jawab langsung** pertanyaan user, bukan topik lain
+3. **Format sesuai konteks**:
+   - List karyawan → tabel markdown
+   - Update/write → tampilkan data before/after sebagai konfirmasi (✅)
+   - Statistik → angka bold
+4. **Insight** — tambahkan jika ada pola menarik atau anomali
+5. **Rekomendasi aksi** — jika relevan (1-3 item, skip jika hanya query informational)
+6. **Bahasa** — Indonesia formal, gunakan emoji secukupnya (✅ ❌ 📊 🎯 ⚠️)
 
-Berikan respons dengan struktur INTERNAL berikut (JANGAN tulis judul section seperti "Pengantar" atau "Inti Jawaban"):
+Tulis respons sekarang:"""
 
-1. **Pembuka singkat** (1 kalimat) - langsung ke inti, tidak perlu basa-basi
-2. **Data/Informasi Utama** - gunakan format yang sesuai:
-   - Tabel markdown untuk daftar karyawan/data terstruktur
-   - Bullet points untuk informasi ringkas
-   - **Bold** untuk angka/nama penting
-   - Konteks informasi **harus** sesuai dengan hasil tools dan tidak boleh mengarang
-3. **Insight/Analisis** (jika ada) - anomali, tren, atau catatan penting
-4. **🎯 Tindakan yang Disarankan** - WAJIB ada jika relevan, berikan 1-3 rekomendasi aksi konkret
-
-## Contoh Format Bagus:
-
----
-Ditemukan **3 karyawan** yang telat hari ini:
-
-| Nama | Departemen | Jam Masuk |
-|------|------------|----------|
-| Budi Santoso | IT | 09:45 |
-| Siti Rahayu | HR | 09:30 |
-| Agus Wijaya | Finance | 10:00 |
-
-📊 Rata-rata keterlambatan: **35 menit**. Departemen IT memiliki keterlambatan tertinggi.
-
-🎯 **Tindakan yang Disarankan:**
-- Kirim reminder kedisiplinan ke departemen IT
-- Tinjau ulang jadwal shift untuk Budi Santoso
-- Pertimbangkan sistem warning jika keterlambatan berulang
----
-
-## Aturan Penting
-- Bahasa Indonesia profesional dan natural
-- JANGAN tulis judul section ("Pengantar", "Jawaban Inti", dll)
-- Jika ada error dari tool, jelaskan dengan bahasa mudah dipahami
-- Jangan expose data sensitif (password, token)
-- Selalu berikan minimal 1 "Tindakan yang Disarankan" jika memungkinkan
-
-Berikan respons sekarang:"""
 
 # ============================================================================
 # MAIN SYSTEM PROMPT (For tool execution stage)
@@ -293,7 +333,10 @@ def get_tool_definitions() -> List[Dict]:
             UTILITY_TOOLS,
             EMAIL_TOOLS,
             ANALYSIS_TOOLS,
-            EXPORT_TOOLS
+            EXPORT_TOOLS,
+            PAYROLL_TOOLS,
+            CV_TOOLS,
+            FILESYSTEM_TOOLS
         )
     except ImportError:
         # Fallback for different import paths
@@ -305,6 +348,9 @@ def get_tool_definitions() -> List[Dict]:
         from MCP.tools.email_tools import EMAIL_TOOLS
         from MCP.tools.analysis_tools import ANALYSIS_TOOLS
         from MCP.tools.export_tools import EXPORT_TOOLS
+        from MCP.tools.payroll_tools import PAYROLL_TOOLS
+        from MCP.tools.cv_tools import CV_TOOLS
+        from MCP.tools.filesystem_tools import FILESYSTEM_TOOLS
     
     all_tools = []
     all_tools.extend(EMPLOYEE_TOOLS)
@@ -315,6 +361,9 @@ def get_tool_definitions() -> List[Dict]:
     all_tools.extend(EMAIL_TOOLS)
     all_tools.extend(ANALYSIS_TOOLS)
     all_tools.extend(EXPORT_TOOLS)
+    all_tools.extend(PAYROLL_TOOLS)
+    all_tools.extend(CV_TOOLS)
+    all_tools.extend(FILESYSTEM_TOOLS)
     
     # Format for Ollama
     formatted_tools = []
@@ -352,19 +401,59 @@ def get_tool_descriptions() -> str:
     return "\n".join(lines)
 
 
-def get_tool_summary() -> str:
-    """Get a detailed summary of available tools for planning stage."""
+def get_tool_summary(tool_hints: list = None) -> str:
+    """
+    Get tool descriptions for Stage 2 planning.
+    
+    If tool_hints is provided (list of tool names recommended by Stage 1),
+    those tools get FULL schema+description. All other tools get name-only.
+    If tool_hints is None/empty, all tools get full descriptions (legacy behavior).
+    """
     tools = get_tool_definitions()
+    
+    if not tool_hints:
+        # Legacy: show full schema for all tools
+        lines = ["### Tool Schema Reference\n"]
+        lines.append("**PENTING:** Gunakan nama parameter PERSIS seperti yang tertera di bawah!\n")
+        
+        for tool in tools:
+            func = tool["function"]
+            params = func.get("parameters", {}).get("properties", {})
+            required = func.get("parameters", {}).get("required", [])
+            
+            param_parts = []
+            for param_name, param_info in params.items():
+                param_type = param_info.get("type", "any")
+                is_required = param_name in required
+                if is_required:
+                    param_parts.append(f"{param_name}: {param_type}")
+                else:
+                    param_parts.append(f"{param_name}?: {param_type}")
+            
+            signature = ", ".join(param_parts) if param_parts else ""
+            lines.append(f"**{func['name']}**({signature})")
+            lines.append(f"  └─ {func['description'][:350]}")
+            lines.append("")
+        
+        return "\n".join(lines)
+    
+    # Smart mode: full schema for hint tools, name-only for the rest
+    hint_set = set(tool_hints)
     
     lines = ["### Tool Schema Reference\n"]
     lines.append("**PENTING:** Gunakan nama parameter PERSIS seperti yang tertera di bawah!\n")
+    lines.append(f"**Stage 1 merekomendasikan tools berikut sebagai PRIORITAS UTAMA:** {', '.join(tool_hints)}\n")
     
+    # --- Section 1: FULL schema for hinted tools ---
+    lines.append("#### Tools Prioritas (full schema):")
     for tool in tools:
         func = tool["function"]
+        if func["name"] not in hint_set:
+            continue
+        
         params = func.get("parameters", {}).get("properties", {})
         required = func.get("parameters", {}).get("required", [])
         
-        # Build parameter signature with types
         param_parts = []
         for param_name, param_info in params.items():
             param_type = param_info.get("type", "any")
@@ -376,7 +465,52 @@ def get_tool_summary() -> str:
         
         signature = ", ".join(param_parts) if param_parts else ""
         lines.append(f"**{func['name']}**({signature})")
-        lines.append(f"  └─ {func['description'][:120]}")
+        lines.append(f"  └─ {func['description'][:350]}")
+        # Inline warning for analysis-only tools
+        if func['name'] in ('analyze_employee_cv', 'summarize_employee_cv'):
+            lines.append("  ⚠️ PERINGATAN: Tool ini hanya menghasilkan TEKS ANALISIS, bukan data terstruktur. JANGAN gunakan outputnya sebagai `updates` di update_employee_by_id.")
+        lines.append("")
+    
+    # --- Section 2: Name-only for non-hinted tools ---
+    non_hinted = [t for t in tools if t["function"]["name"] not in hint_set]
+    if non_hinted:
+        lines.append("#### Tools Tambahan (tersedia jika diperlukan, tanpa full schema):")
+        for tool in non_hinted:
+            func = tool["function"]
+            lines.append(f"- **{func['name']}**: {func['description'][:100]}")
         lines.append("")
     
     return "\n".join(lines)
+
+
+def get_compact_tool_catalog() -> str:
+    """
+    Returns a compact tool catalog for Stage 1 (escalation prompt).
+    Each tool is shown as one line: name → short description.
+    No parameter details — Stage 1 only needs to know WHAT each tool does
+    so it can recommend the right tools for Stage 2.
+    Also prints the catalog to terminal for debugging.
+    """
+    tools = get_tool_definitions()
+    lines = []
+    for tool in tools:
+        func = tool["function"]
+        name = func["name"]
+        desc = func["description"][:120].rstrip()
+        if len(func["description"]) > 120:
+            desc += "..."
+        lines.append(f"- `{name}`: {desc}")
+
+    catalog = "\n".join(lines)
+
+    # Print to terminal for visibility
+    print("\n" + "=" * 60)
+    print(f"[TOOL CATALOG] {len(tools)} tools tersedia untuk Stage 1:")
+    print("=" * 60)
+    for tool in tools:
+        func = tool["function"]
+        print(f"  {func['name']}: {func['description'][:80].rstrip()}")
+    print("=" * 60 + "\n")
+
+    return catalog
+

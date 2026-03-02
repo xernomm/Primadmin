@@ -44,7 +44,14 @@ export interface Message {
     tool_calls?: ToolCall[];
     thinking?: string;
     metadata?: MessageMetadata;
+    file_attachment?: FileAttachment;
     created_at?: string;
+}
+
+export interface FileAttachment {
+    filename: string;
+    size: number;
+    type: string;  // file extension or MIME
 }
 
 export interface ToolCall {

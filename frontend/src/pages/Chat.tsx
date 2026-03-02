@@ -15,6 +15,7 @@ export function Chat() {
     const messages = useChatStore((state) => state.messages);
     const isLoading = useChatStore((state) => state.isLoading);
     const sendMessage = useChatStore((state) => state.sendMessage);
+    const abortRequest = useChatStore((state) => state.abortRequest);
     const loadConversations = useChatStore((state) => state.loadConversations);
     const currentConversationId = useChatStore((state) => state.currentConversationId);
     const initSocket = useChatStore((state) => state.initSocket);
@@ -63,10 +64,47 @@ export function Chat() {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
 
-    const handleSend = async (message: string) => {
-        if (!message.trim() || isLoading) return;
+    const handleSend = async (message: string, file?: File) => {
+        if ((!message.trim() && !file) || isLoading) return;
         setInputText(''); // Clear input after send
-        await sendMessage(message, currentConversationId || undefined);
+
+        let filePath: string | undefined;
+        let fileAttachment: { filename: string; size: number; type: string } | undefined;
+
+        // Upload file first if attached
+        if (file) {
+            try {
+                const { getValidToken } = await import('../utils/tokenUtils');
+                const token = await getValidToken();
+                const formData = new FormData();
+                formData.append('file', file);
+
+                const resp = await fetch('/api/upload/cv', {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    body: formData
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    filePath = result.file_path;
+                    fileAttachment = {
+                        filename: file.name,
+                        size: file.size,
+                        type: file.name.split('.').pop()?.toLowerCase() || 'file',
+                    };
+                }
+            } catch (err) {
+                console.error('File upload failed:', err);
+            }
+        }
+
+        const messageToSend = filePath ? `${message} [file_attached: ${filePath}]` : message;
+
+        await sendMessage(
+            messageToSend,
+            currentConversationId || undefined,
+            fileAttachment
+        );
     };
 
     const handleSuggestionClick = (text: string) => {
@@ -87,10 +125,11 @@ export function Chat() {
         <div
             className="flex h-screen overflow-hidden"
             style={{
-                backgroundImage: `url(${BackgroundImg})`,
+                // backgroundImage: `url(${BackgroundImg})`,
                 backgroundSize: 'cover',
                 backgroundPosition: 'center',
-                backgroundRepeat: 'no-repeat'
+                backgroundRepeat: 'no-repeat',
+                backgroundColor: '#181818ff'
             }}
         >
             {/* Sidebar */}
@@ -127,12 +166,12 @@ export function Chat() {
                         <h1 className="text-lg font-semibold text-white">Primassistant</h1>
                     </div>
 
-                    <div className="flex items-center gap-2 text-sm text-slate-400">
+                    <div className="flex items-center gap-2 text-sm text-slate-400 min-w-[100px] justify-end">
                         {isLoading && (
-                            <span className="flex items-center gap-2">
-                                <div className="spinner"></div>
-                                Memproses...
-                            </span>
+                            <div className="flex items-center gap-2 animate-fade-in">
+                                <div className="spinner-sm"></div>
+                                <span>Memproses...</span>
+                            </div>
                         )}
                     </div>
                 </header>
@@ -143,6 +182,7 @@ export function Chat() {
                         messages={messages}
                         isLoading={isLoading}
                         onSuggestionClick={handleSuggestionClick}
+                        sidebarOpen={sidebarOpen}
                     />
                     <div ref={messagesEndRef} />
                 </div>
@@ -150,6 +190,7 @@ export function Chat() {
                 {/* Input Area */}
                 <InputArea
                     onSend={handleSend}
+                    onStop={abortRequest}
                     disabled={isLoading}
                     inputValue={inputText}
                     onInputChange={setInputText}

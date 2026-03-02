@@ -8,6 +8,7 @@ import ollama
 import base64, os
 import logging
 import traceback
+from config import BACKEND_DIR, CV_DIR, EXPORTS_DIR, PAYROLL_EXPORTS_DIR, DOCUMENTS_DIR
 from database.db import init_db
 from users.user_auth import login_user, logout_user, get_user_id_by_email, get_user_by_email
 from chats.chat_service import (
@@ -24,6 +25,7 @@ from chats.chat_service import (
 )
 from chats.processing_service import save_processing_stage, get_processing_stages, clear_processing_stages
 from LLM.bot import get_context_from_rag, store_chat_history
+from agent.core import set_abort as agent_set_abort
 from MCP.agent_runner import run_agent
 from tools.run_async import run_async
 from tools.jwt_services import generate_jwt_pair, save_tokens, refresh_access_token
@@ -289,7 +291,7 @@ def get_policies():
     try:
         from pathlib import Path
         
-        policies_dir = Path(__file__).parent / "documents" / "policies"
+        policies_dir = DOCUMENTS_DIR / "policies"
         policies = []
         
         # Define the order and metadata for policies
@@ -317,6 +319,97 @@ def get_policies():
 
 # <---------------------------------------------------- EXPORT DOWNLOADS ---------------------------------------------------->
 
+# Upload CV file
+@app.route("/api/upload/cv", methods=["POST"])
+@jwt_required
+def upload_cv_file():
+    """Upload a CV file for an employee.
+    
+    Form fields:
+        file          - The CV file (required)
+        employee_id   - Database ID of the employee (optional).
+                        If provided, the file is renamed and registered in employee_cv.
+                        If omitted, file is saved temporarily and path is returned for
+                        the agent to call manage_cv_file manually.
+    """
+    try:
+        from pathlib import Path
+        from werkzeug.utils import secure_filename
+        
+        if 'file' not in request.files:
+            return jsonify({"error": "No file provided"}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({"error": "No file selected"}), 400
+        
+        # Validate file type
+        allowed_extensions = {'.pdf', '.doc', '.docx', '.txt', '.jpg', '.jpeg', '.png'}
+        ext = Path(file.filename).suffix.lower()
+        if ext not in allowed_extensions:
+            return jsonify({"error": f"File type {ext} not allowed"}), 400
+        
+        # Save to cv uploads directory (temporary name = original filename)
+        filename = secure_filename(file.filename)
+        filepath = CV_DIR / filename
+        file.save(str(filepath))
+        
+        # If employee_id provided, call manage_cv_file to rename + update DB
+        employee_id = request.form.get("employee_id") or request.args.get("employee_id")
+        if employee_id:
+            try:
+                emp_id_int = int(employee_id)
+                from MCP.tools.cv_tools import manage_cv_file
+                result = manage_cv_file(
+                    emp_id=emp_id_int,
+                    action="upload",
+                    file_path=str(filepath)
+                )
+                if result.get("success"):
+                    # Remove the temp file if it differs from the registered dest
+                    registered_path = Path(result.get("file_path", ""))
+                    if registered_path != filepath and filepath.exists():
+                        try:
+                            filepath.unlink()
+                        except Exception:
+                            pass
+                    return jsonify({
+                        "success": True,
+                        "file_path": result["file_path"],
+                        "filename": result["filename"],
+                        "download_url": result.get("download_url"),
+                        "db_updated": True,
+                        "size": registered_path.stat().st_size if registered_path.exists() else None
+                    })
+                else:
+                    # manage_cv_file failed — still return the temp file path
+                    return jsonify({
+                        "success": True,
+                        "file_path": str(filepath),
+                        "filename": filename,
+                        "db_updated": False,
+                        "db_error": result.get("error"),
+                        "size": filepath.stat().st_size
+                    })
+            except (ValueError, TypeError):
+                pass  # bad employee_id, fall through to basic response
+
+        # No employee_id — return saved path as dynamic URL for agent to process (with or without domain)
+        from config import BASE_URL
+        download_url = f"/api/uploads/cv/{filename}"
+        full_server_url = f"{BASE_URL}{download_url}"
+        
+        return jsonify({
+            "success": True,
+            "file_path": full_server_url,
+            "filename": filename,
+            "db_updated": False,
+            "note": "File disimpan sementara. Kirim employee_id untuk mendaftarkan ke database.",
+            "size": filepath.stat().st_size
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/api/exports/<filename>", methods=["GET"])
 @jwt_required
 def download_export(filename):
@@ -329,7 +422,7 @@ def download_export(filename):
         if '..' in filename or '/' in filename or '\\' in filename:
             return jsonify({"error": "Invalid filename"}), 400
         
-        exports_dir = Path(__file__).parent / "exports"
+        exports_dir = EXPORTS_DIR
         filepath = exports_dir / filename
         
         if not filepath.exists():
@@ -344,12 +437,83 @@ def download_export(filename):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+@app.route("/api/exports/payroll/<filename>", methods=["GET"])
+@jwt_required
+def download_payroll_export(filename):
+    """Download generated payroll PDF files."""
+    try:
+        from flask import send_from_directory
+        from pathlib import Path
+        
+        if '..' in filename or '/' in filename or '\\' in filename:
+            return jsonify({"error": "Invalid filename"}), 400
+        
+        payroll_dir = PAYROLL_EXPORTS_DIR
+        filepath = payroll_dir / filename
+        
+        if not filepath.exists():
+            return jsonify({"error": "File tidak ditemukan"}), 404
+        
+        return send_from_directory(
+            payroll_dir,
+            filename,
+            as_attachment=True,
+            download_name=filename
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/uploads/cv/<filename>", methods=["GET"])
+@jwt_required
+def download_cv_file(filename):
+    """Download/view uploaded CV files."""
+    try:
+        from flask import send_from_directory
+        from pathlib import Path
+        
+        if '..' in filename or '/' in filename or '\\' in filename:
+            return jsonify({"error": "Invalid filename"}), 400
+        
+        filepath = CV_DIR / filename
+        
+        if not filepath.exists():
+            return jsonify({"error": "File tidak ditemukan"}), 404
+        
+        return send_from_directory(
+            CV_DIR,
+            filename,
+            as_attachment=True,
+            download_name=filename
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 # <---------------------------------------------------- SOCKETIO EVENTS ---------------------------------------------------->
 
 
 @socketio.on('connect')
 def handle_connect():
     logging.info(f"Client connected: {request.sid}")
+
+@socketio.on('abort')
+def handle_abort():
+    """Client pressed Stop — set abort flag for this session."""
+    sid = request.sid
+    agent_set_abort(sid)
+    print(f"[ABORT] Received abort from socket {sid}")
+    emit('status_update', {'status': '⏹ Proses dihentikan.'})
+
+@app.route("/api/abort", methods=["POST"])
+@jwt_required
+def http_abort():
+    """REST fallback to abort the current agent run for a given socket session."""
+    sid = request.json.get("session_id") if request.is_json else None
+    if sid:
+        agent_set_abort(sid)
+        return jsonify({"success": True, "message": "Proses dibatalkan."}), 200
+    return jsonify({"success": False, "error": "session_id wajib"}), 400
 
 @socketio.on('chat_message')
 def handle_chat_message(data):
@@ -386,6 +550,15 @@ def handle_chat_message(data):
                         socketio.emit('status_update', {'status': status_msg}, room=user_sid)
                     
                     def stage_callback(stage_data):
+                        # --- RESET event: verification failed, agent retrying ---
+                        if stage_data.get("type") == "reset":
+                            print(f"[SOCKET] Emitting stage_retry_reset: attempt {stage_data.get('retry_attempt', '?')}")
+                            socketio.emit('stage_retry_reset', stage_data, room=user_sid)
+                            # Clear persisted stages in DB so retry starts with fresh slate
+                            if conv_id and conv_id > 0:
+                                clear_processing_stages(conv_id)
+                            return
+                        # --- Normal stage_complete ---
                         print(f"[SOCKET] Emitting stage_complete: Stage {stage_data.get('stage', '?')}")
                         socketio.emit('stage_complete', stage_data, room=user_sid)
                         # Persist stage to database
@@ -405,7 +578,8 @@ def handle_chat_message(data):
                         user_id=uid,
                         conversation_id=conv_id,
                         status_callback=status_callback,
-                        stage_callback=stage_callback
+                        stage_callback=stage_callback,
+                        session_id=user_sid  # pass SID for abort support
                     ))
                     
                     if isinstance(result, dict):

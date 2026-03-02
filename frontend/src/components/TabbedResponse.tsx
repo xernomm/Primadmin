@@ -79,7 +79,7 @@ export default function TabbedResponse({ answer, stageLogs, toolCalls, widget }:
             {/* Tab Content */}
             <div className="tab-content">
                 {activeTab === 'answer' && (
-                    <div className="prose prose-invert max-w-none prose-base md:prose-lg font-medium tracking-tight text-zinc-100">
+                    <div className="prose prose-invert max-w-none prose-sm font-medium tracking-tight text-zinc-100">
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>
                             {answer}
                         </ReactMarkdown>
@@ -99,27 +99,27 @@ export default function TabbedResponse({ answer, stageLogs, toolCalls, widget }:
                 )}
 
                 {activeTab === 'process' && (
-                    <div className="process-content">
-                        <div className="max-h-[500px] overflow-y-auto custom-scrollbar p-3 rounded-lg bg-black/20 space-y-4">
+                    <div className="process-content w-full max-w-[800px] overflow-hidden">
+                        <div className="max-h-[600px] overflow-y-auto overflow-x-hidden custom-scrollbar p-3 rounded-xl bg-black/40 backdrop-blur-sm border border-white/5 space-y-5">
                             {!stageLogs || stageLogs.length === 0 ? (
                                 <p className="text-zinc-500 italic">No processing logs available.</p>
                             ) : (
                                 stageLogs.map((stage) => {
                                     const { thinking, main } = parseThinkingContent(stage.content);
                                     return (
-                                        <div key={stage.stage} className="border-b border-white/5 last:border-0 pb-4 last:pb-0">
-                                            <h3 className="text-sm font-bold text-primary-400 mb-2">
-                                                Stage {stage.stage}: {stage.name}
+                                        <div key={stage.stage} className="border-b border-white/5 last:border-0 pb-4 last:pb-0 max-w-full overflow-hidden">
+                                            <h3 className="text-sm font-bold text-primary-400 mb-2 truncate">
+                                                {stage.name}
                                             </h3>
 
                                             {/* Thinking Block */}
                                             {thinking && (
-                                                <div className="mb-2 p-2 rounded-lg bg-violet-500/10 border border-violet-500/20">
+                                                <div className="mb-2 p-2 rounded-lg bg-violet-500/10 border border-violet-500/20 max-w-full overflow-hidden">
                                                     <div className="flex items-center gap-1 mb-1 text-xs text-violet-400 font-mono">
                                                         <span>🧠</span>
                                                         <span>Thinking</span>
                                                     </div>
-                                                    <div className="text-xs text-zinc-400 font-mono whitespace-pre-wrap">
+                                                    <div className="text-xs text-zinc-400 font-mono whitespace-pre-wrap break-words overflow-hidden">
                                                         {thinking}
                                                     </div>
                                                 </div>
@@ -127,7 +127,7 @@ export default function TabbedResponse({ answer, stageLogs, toolCalls, widget }:
 
                                             {/* Main Content */}
                                             {main && (
-                                                <div className="prose prose-invert prose-sm max-w-none text-zinc-300">
+                                                <div className="prose prose-invert prose-sm max-w-full text-zinc-300 break-words overflow-hidden">
                                                     <ReactMarkdown remarkPlugins={[remarkGfm]}>
                                                         {main}
                                                     </ReactMarkdown>

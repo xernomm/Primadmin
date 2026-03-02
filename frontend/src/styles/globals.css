@@ -53,7 +53,7 @@ body {
 }
 
 .glass-dark {
-  background: rgba(15, 23, 42, 0.8);
+  background: rgba(31, 32, 35, 0.8);
   backdrop-filter: blur(10px);
   border: 1px solid rgba(255, 255, 255, 0.05);
 }
@@ -83,11 +83,11 @@ body {
 
   0%,
   100% {
-    box-shadow: 0 0 20px rgba(56, 189, 248, 0.3);
+    box-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
   }
 
   50% {
-    box-shadow: 0 0 40px rgba(56, 189, 248, 0.5);
+    box-shadow: 0 0 40px rgb(255, 255, 255);
   }
 }
 
@@ -97,6 +97,36 @@ body {
 
 .animate-pulse-glow {
   animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* Retry banner animations */
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pulse-subtle {
+
+  0%,
+  100% {
+    border-color: rgba(245, 158, 11, 0.4);
+    box-shadow: 0 0 8px rgba(245, 158, 11, 0.1);
+  }
+
+  50% {
+    border-color: rgba(245, 158, 11, 0.7);
+    box-shadow: 0 0 16px rgba(245, 158, 11, 0.2);
+  }
+}
+
+.animate-spin-slow {
+  animation: spin-slow 2s linear infinite;
+  display: inline-block;
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 1.5s ease-in-out infinite;
 }
 
 /* Message bubbles */
@@ -132,6 +162,15 @@ textarea:focus {
   width: 24px;
   height: 24px;
   border: 3px solid rgba(255, 255, 255, 0.1);
+  border-top-color: #38bdf8;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.spinner-sm {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
   border-top-color: #38bdf8;
   border-radius: 50%;
   animation: spin 1s linear infinite;
@@ -248,6 +287,33 @@ textarea:focus {
 .process-content .prose hr {
   border-color: rgba(255, 255, 255, 0.1);
   margin: 1rem 0;
+}
+
+/* Force wrapping for code blocks and long text in process tab */
+.process-content {
+  max-width: min(1200px, 100%) !important;
+}
+
+.process-content pre {
+  white-space: pre-wrap !important;
+  word-break: break-all !important;
+  max-width: 100% !important;
+  overflow-x: hidden !important;
+  background: rgba(0, 0, 0, 0.4) !important;
+  padding: 1.25rem !important;
+  border-radius: 0.75rem !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+.process-content code {
+  white-space: pre-wrap !important;
+  word-break: break-all !important;
+  font-size: 0.85rem !important;
+}
+
+.process-content .prose {
+  word-break: break-all !important;
+  overflow-wrap: break-word !important;
 }
 
 .process-content .prose h3 {

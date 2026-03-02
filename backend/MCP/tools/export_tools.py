@@ -21,9 +21,10 @@ ORACLE_SERVICE = os.getenv("ORACLE_SERVICE_NAME")
 
 dsn = cx_Oracle.makedsn(ORACLE_HOST, ORACLE_PORT, service_name=ORACLE_SERVICE)
 
-# Export directory
-EXPORT_DIR = Path(__file__).parent.parent.parent / "exports"
-EXPORT_DIR.mkdir(exist_ok=True)
+# Export directory — import from centralized config
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from config import EXPORTS_DIR as EXPORT_DIR
 
 
 def _get_connection():

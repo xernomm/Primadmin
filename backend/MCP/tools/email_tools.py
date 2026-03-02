@@ -32,8 +32,10 @@ ORACLE_SERVICE = os.getenv("ORACLE_SERVICE_NAME")
 
 dsn = cx_Oracle.makedsn(ORACLE_HOST, ORACLE_PORT, service_name=ORACLE_SERVICE)
 
-# Template directory
-TEMPLATE_DIR = Path(__file__).parent.parent.parent / "templates" / "email"
+# Template directory — import from centralized config
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from config import EMAIL_TEMPLATES_DIR as TEMPLATE_DIR
 
 
 def _sanitize_email(email: str) -> str:
