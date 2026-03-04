@@ -256,7 +256,7 @@ CV_TABLE_COLUMNS = {
 def update_employee_by_id(emp_id: int, updates: Dict[str, Any]) -> Dict[str, Any]:
     """
     Update employee details by ID.
-    Supports fields from both the 'employees' table and the 'employee_cv' table.
+    Supports fields from the 'employees' table.
     
     Args:
         emp_id: Employee ID
@@ -265,18 +265,6 @@ def update_employee_by_id(emp_id: int, updates: Dict[str, Any]) -> Dict[str, Any
     Valid employees fields: position, address, status, basic_salary, phone, email,
                             marital_status, department, employment_status, sp_level,
                             remaining_leave, bpjs_number, joined_at
-    Valid employee_cv fields: education_level, education_institution, education_major,
-                              graduation_year, certifications, skills, work_experience,
-                              current_position, current_department, current_salary,
-                              emergency_contact_name, emergency_contact_phone,
-                              emergency_contact_relation, blood_type, religion,
-                              ktp_number, npwp_number, bank_name, bank_account_number,
-                              bank_account_name, deduction_bpjs_kesehatan,
-                              deduction_bpjs_ketenagakerjaan, deduction_meal,
-                              deduction_transport, deduction_insurance,
-                              deduction_laptop_installment, deduction_laptop_remaining_months,
-                              deduction_other, deduction_other_description,
-                              total_monthly_deductions, notes
         
     Returns:
         Dict with success status and message
@@ -298,9 +286,6 @@ def update_employee_by_id(emp_id: int, updates: Dict[str, Any]) -> Dict[str, Any
         conn = _get_connection()
         cur = conn.cursor()
         
-        # --- Separate updates for employees table vs employee_cv table ---
-        cv_updates = {k: v for k, v in updates.items() if k.lower() in CV_TABLE_COLUMNS}
-        
         # Get valid columns for employees table (dynamically)
         cur.execute("SELECT * FROM employees WHERE ROWNUM = 1")
         valid_emp_columns = set(
@@ -309,7 +294,7 @@ def update_employee_by_id(emp_id: int, updates: Dict[str, Any]) -> Dict[str, Any
         )
         emp_updates = {k: v for k, v in updates.items() if k.lower() in valid_emp_columns}
         
-        if not emp_updates and not cv_updates:
+        if not emp_updates:
             cur.close()
             conn.close()
             return {"success": False, "error": "Tidak ada kolom valid yang diperbarui. Periksa nama field yang diberikan."}
@@ -322,26 +307,6 @@ def update_employee_by_id(emp_id: int, updates: Dict[str, Any]) -> Dict[str, Any
             set_clause = ", ".join(f"{k} = :{k}" for k in emp_updates if k != "emp_id")
             cur.execute(f"UPDATE employees SET {set_clause} WHERE id = :emp_id", emp_updates)
             messages.append(f"{len(emp_updates) - 1} field tabel employees")
-        
-        # --- Update employee_cv table ---
-        if cv_updates:
-            # Check if CV record exists
-            cur.execute("SELECT id FROM employee_cv WHERE employee_id = :eid", {"eid": emp_id})
-            cv_row = cur.fetchone()
-            
-            if cv_row:
-                cv_updates["emp_id"] = emp_id
-                set_clause = ", ".join(f"{k} = :{k}" for k in cv_updates if k != "emp_id")
-                set_clause += ", updated_at = CURRENT_TIMESTAMP"
-                cur.execute(f"UPDATE employee_cv SET {set_clause} WHERE employee_id = :emp_id", cv_updates)
-                messages.append(f"{len(cv_updates) - 1} field tabel employee_cv")
-            else:
-                # Insert minimal CV record with the given fields
-                cv_updates["employee_id"] = emp_id
-                cols = ", ".join(cv_updates.keys())
-                placeholders = ", ".join(f":{k}" for k in cv_updates.keys())
-                cur.execute(f"INSERT INTO employee_cv ({cols}) VALUES ({placeholders})", cv_updates)
-                messages.append(f"{len(cv_updates) - 1} field tabel employee_cv (record baru dibuat)")
         
         conn.commit()
 
@@ -359,18 +324,6 @@ def update_employee_by_id(emp_id: int, updates: Dict[str, Any]) -> Dict[str, Any
                     for i, field in enumerate(fields):
                         val = row[i]
                         updated_data[field] = val.read() if hasattr(val, "read") else val
-            if cv_updates:
-                cv_fields = [k for k in cv_updates if k not in ("emp_id", "employee_id")]
-                if cv_fields:
-                    cur.execute(
-                        f"SELECT {', '.join(cv_fields)} FROM employee_cv WHERE employee_id = :eid",
-                        {"eid": emp_id}
-                    )
-                    row = cur.fetchone()
-                    if row:
-                        for i, field in enumerate(cv_fields):
-                            val = row[i]
-                            updated_data[field] = val.read() if hasattr(val, "read") else val
         except Exception:
             pass  # non-critical
 
@@ -608,8 +561,14 @@ def get_employee_files(emp_id: int) -> Dict[str, Any]:
         )
         cv_row = cur.fetchone()
         if cv_row:
-            cv_abs = cv_row[0]  # absolute path stored in DB
+            cv_abs_raw = cv_row[0]  # raw value from DB (could be path or URL)
             cv_url = cv_row[1]  # server URL stored in DB
+            
+            # Resolve absolute path
+            from config import url_to_abs_path
+            resolved = url_to_abs_path(str(cv_abs_raw)) if cv_abs_raw else None
+            cv_abs = str(resolved) if resolved else (cv_abs_raw if cv_abs_raw and not str(cv_abs_raw).startswith("http") else None)
+            
             cv_exists = Path(str(cv_abs)).exists() if cv_abs else False
 
             # Build server URL if download_url not stored yet
@@ -637,15 +596,18 @@ def get_employee_files(emp_id: int) -> Dict[str, Any]:
         payroll_rows = cur.fetchall()
         payroll_files = []
         for row in payroll_rows:
-            month, year, fp, du, st = row
-            abs_path = str(fp) if fp else None
-            server_url = du if du else (f"{BASE_URL}/uploads/payroll/{Path(fp).name}" if fp else None)
+            month, year, fp_raw, du, st = row
+            from config import url_to_abs_path
+            resolved_fp = url_to_abs_path(str(fp_raw)) if fp_raw else None
+            abs_path = str(resolved_fp) if resolved_fp else (fp_raw if fp_raw and not str(fp_raw).startswith("http") else None)
+            
+            server_url = du if du else (f"{BASE_URL}/uploads/payroll/{Path(fp_raw).name}" if fp_raw else None)
             payroll_files.append({
                 "period": f"{year}-{str(month).zfill(2)}",
-                "filename": Path(str(fp)).name if fp else None,
+                "filename": Path(str(abs_path)).name if abs_path else (Path(str(fp_raw)).name if fp_raw else None),
                 "abs_path": abs_path,
                 "server_url": server_url,
-                "exists": Path(str(fp)).exists() if fp else False,
+                "exists": Path(str(abs_path)).exists() if abs_path else False,
                 "status": st,
             })
         files["payroll_slips"] = payroll_files
@@ -734,7 +696,7 @@ EMPLOYEE_TOOLS = [
     },
     {
         "name": "update_employee_by_id",
-        "description": "Update data karyawan (tabel employees DAN employee_cv). HARUS gunakan emp_id (database ID integer), BUKAN employee_code. Field tabel employees: position, address, status, basic_salary, phone, email, marital_status, department, employment_status, sp_level, remaining_leave, bpjs_number. Field tabel employee_cv: education_level, education_institution, education_major, graduation_year, certifications, skills, work_experience, current_position, current_department, current_salary, emergency_contact_name, emergency_contact_phone, emergency_contact_relation, blood_type, religion, ktp_number, npwp_number, bank_name, bank_account_number, bank_account_name, deduction_bpjs_kesehatan, deduction_bpjs_ketenagakerjaan, deduction_meal, deduction_transport, deduction_insurance, deduction_laptop_installment, deduction_laptop_remaining_months, deduction_other, deduction_other_description, total_monthly_deductions, notes.",
+        "description": "Update data karyawan (hanya tabel employees). HARUS gunakan emp_id (database ID integer), BUKAN employee_code. Field tabel employees: position, address, status, basic_salary, phone, email, marital_status, department, employment_status, sp_level, remaining_leave, bpjs_number, joined_at.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -744,7 +706,7 @@ EMPLOYEE_TOOLS = [
                 },
                 "updates": {
                     "type": "object",
-                    "description": "Object berisi field dan nilai baru. Contoh: {\"position\": \"Manager\", \"basic_salary\": 15000000, \"skills\": \"Python, SQL\"}"
+                    "description": "Object berisi field dan nilai baru. Contoh: {\"position\": \"Manager\", \"basic_salary\": 15000000}"
                 }
             },
             "required": ["emp_id", "updates"]

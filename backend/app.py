@@ -571,6 +571,10 @@ def handle_chat_message(data):
                                 status=stage_data.get('status', 'complete')
                             )
 
+                    def sub_status_callback(sub_data):
+                        """Forward tool-level sub-status events to frontend."""
+                        socketio.emit('sub_status', sub_data, room=user_sid)
+
                     # Run agent with both callbacks
                     result = run_async(run_agent(
                         user_input=query,
@@ -579,7 +583,8 @@ def handle_chat_message(data):
                         conversation_id=conv_id,
                         status_callback=status_callback,
                         stage_callback=stage_callback,
-                        session_id=user_sid  # pass SID for abort support
+                        sub_status_callback=sub_status_callback,
+                        session_id=user_sid
                     ))
                     
                     if isinstance(result, dict):

@@ -14,6 +14,17 @@ export interface StageData {
     status: 'processing' | 'complete' | 'error';
 }
 
+export interface SubStatusEvent {
+    type: 'tool_start' | 'tool_done' | 'plan_validated' | 'plan_invalid';
+    tool?: string;
+    step?: number;
+    success?: boolean;
+    valid?: boolean;
+    steps?: number;
+    attempt?: number;
+    errors?: string[];
+}
+
 interface ChatState {
     messages: Message[];
     conversations: Conversation[];
@@ -23,8 +34,9 @@ interface ChatState {
     statusText: string;
     socket: Socket | null;
     socketId: string | null;  // Current socket session ID (for abort)
-    stageDataByConversation: Record<number, StageData[]>;  // For processing block display per conversation
-    processingConversationId: number | null;  // Track which conversation is currently processing
+    stageDataByConversation: Record<number, StageData[]>;
+    subStatusByConversation: Record<number, SubStatusEvent[]>;
+    processingConversationId: number | null;
 
     initSocket: () => void;
     disconnectSocket: () => void;
@@ -36,7 +48,8 @@ interface ChatState {
     createNewConversation: () => void;
     clearError: () => void;
     clearStageData: (conversationId?: number) => void;
-    getStageData: () => StageData[];  // Get stage data for current/processing conversation
+    getStageData: () => StageData[];
+    getSubStatus: () => SubStatusEvent[];
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -49,6 +62,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     socket: null,
     socketId: null,
     stageDataByConversation: {},
+    subStatusByConversation: {},
     processingConversationId: null,
 
     initSocket: () => {
@@ -125,7 +139,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 set((state) => ({
                     stageDataByConversation: {
                         ...state.stageDataByConversation,
-                        [processingId]: [retryBanner]  // clear old stages, show banner only
+                        [processingId]: [retryBanner]
+                    },
+                    subStatusByConversation: {
+                        ...state.subStatusByConversation,
+                        [processingId]: []  // Clear sub-status on retry reset
                     }
                 }));
                 // After a short delay, mark the retry banner complete so it collapses
@@ -142,6 +160,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
                         };
                     });
                 }, 1200);
+            }
+        });
+
+
+        // Sub-status events (tool-level progress)
+        socket.on('sub_status', (data: SubStatusEvent) => {
+            const processingId = get().processingConversationId;
+            if (processingId !== null) {
+                set((state) => ({
+                    subStatusByConversation: {
+                        ...state.subStatusByConversation,
+                        [processingId]: [...(state.subStatusByConversation[processingId] || []), data]
+                    }
+                }));
             }
         });
 
@@ -201,7 +233,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
             processingConversationId: targetConversationId,
             stageDataByConversation: {
                 ...get().stageDataByConversation,
-                [targetConversationId]: []  // Clear stage data for this conversation
+                [targetConversationId]: []
+            },
+            subStatusByConversation: {
+                ...get().subStatusByConversation,
+                [targetConversationId]: []
             }
         });
 
@@ -316,6 +352,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 resolve();
             });
         });
+
     },
 
     loadConversation: async (conversationId: number) => {
@@ -429,10 +466,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     getStageData: () => {
         const state = get();
-        // Prioritize processing conversation, then current conversation
         const targetId = state.processingConversationId ?? state.currentConversationId;
         if (targetId !== null && state.stageDataByConversation[targetId]) {
             return state.stageDataByConversation[targetId];
+        }
+        return [];
+    },
+
+    getSubStatus: () => {
+        const state = get();
+        const targetId = state.processingConversationId ?? state.currentConversationId;
+        if (targetId !== null && state.subStatusByConversation[targetId]) {
+            return state.subStatusByConversation[targetId];
         }
         return [];
     },

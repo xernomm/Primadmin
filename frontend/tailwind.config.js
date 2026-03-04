@@ -10,25 +10,25 @@ export default {
         extend: {
             colors: {
                 primary: {
-                    50: '#fff1f2',
-                    100: '#ffe4e6',
-                    200: '#fecdd3',
-                    300: '#fda4af',
-                    400: '#fb7185',
-                    500: '#f43f5e',
-                    600: '#e11d48',
-                    700: '#be123c',
-                    800: '#9f1239',
-                    900: '#881337',
+                    50: '#fef2f2',  // Red 50
+                    100: '#fee2e2', // Red 100
+                    200: '#fecaca', // Red 200
+                    300: '#fca5a5', // Red 300
+                    400: '#f87171', // Red 400
+                    500: '#ef4444', // Red 500
+                    600: '#dc2626', // Red 600 (Darker red for primary actions)
+                    700: '#b91c1c', // Red 700
+                    800: '#991b1b', // Red 800
+                    900: '#7f1d1d', // Red 900
                 },
                 hr: {
-                    dark: '#09090b',    // Zinc 950
-                    darker: '#000000',  // Black
-                    accent: '#18181b',  // Zinc 900
-                    card: '#27272a',    // Zinc 800
-                    highlight: '#f43f5e', // Rose 500
-                    text: '#e4e4e7',      // Zinc 200
-                    muted: '#a1a1aa'      // Zinc 400
+                    dark: '#0a0a0a',      // Very dark background
+                    darker: '#000000',    // Pure black
+                    accent: '#181818',    // Requested dark gray
+                    card: '#222222',      // Slightly lighter card background
+                    highlight: '#dc2626', // Sharp dark red highlight
+                    text: '#ffffff',      // Pure white text
+                    muted: '#a3a3a3'      // Neutral gray (Neutral 400)
                 }
             }
         },

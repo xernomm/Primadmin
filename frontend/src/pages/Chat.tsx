@@ -129,7 +129,7 @@ export function Chat() {
                 backgroundSize: 'cover',
                 backgroundPosition: 'center',
                 backgroundRepeat: 'no-repeat',
-                backgroundColor: '#181818ff'
+                backgroundColor: '#181818'
             }}
         >
             {/* Sidebar */}

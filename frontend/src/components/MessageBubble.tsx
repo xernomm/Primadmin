@@ -29,7 +29,7 @@ function parseFileAttachment(content: string): { cleanContent: string; filePath:
 
 // File type icon component
 function FileIcon({ ext }: { ext: string | null }) {
-    const color = ext === 'pdf' ? 'text-red-400' : ext === 'docx' || ext === 'doc' ? 'text-blue-400' : 'text-zinc-400';
+    const color = ext === 'pdf' ? 'text-red-400' : ext === 'docx' || ext === 'doc' ? 'text-white' : 'text-zinc-400';
     return (
         <svg className={`w-5 h-5 ${color}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -51,10 +51,10 @@ export function MessageBubble({ message }: MessageBubbleProps) {
 
     return (
         <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} animate-fade-in mb-6 min-w-0 w-full`}>
-            <div className={`max-w-[95%] md:max-w-[95%] min-w-0 ${isUser ? 'order-2' : 'order-1'} flex flex-col items-${isUser ? 'end' : 'start'}`}>
+            <div className={`min-w-0 ${isUser ? 'max-w-[85%] md:max-w-[65%] order-2' : 'max-w-full order-1'} flex flex-col items-${isUser ? 'end' : 'start'}`}>
                 {/* Avatar */}
                 <div className={`flex items-start gap-3 ${isUser ? 'flex-row-reverse w-full' : ''}`}>
-                    <div className={`flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center ${isUser
+                    {/* <div className={`flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center ${isUser
                         ? 'bg-gradient-to-br from-primary-600 to-primary-800 shadow-lg'
                         : ''
                         }`}>
@@ -65,7 +65,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                         ) : (
                             <img src={PrimaLogo} alt="Primassistant" className="w-7 h-7 object-contain" />
                         )}
-                    </div>
+                    </div> */}
 
                     <div className={`flex-1 ${isUser ? 'flex flex-col items-end' : ''}`}>
 
@@ -87,7 +87,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                         )}
 
                         <div className={`${isUser
-                            ? 'bg-primary-600 text-white shadow-primary-500/20 px-5 py-4 rounded-2xl rounded-tr-none shadow-xl'
+                            ? 'bg-primary-600 text-white shadow-primary-500/20 px-5 py-4 rounded-2xl rounded-br-none shadow-xl'
                             : 'text-zinc-100 w-full'} 
                             transition-all`}>
 

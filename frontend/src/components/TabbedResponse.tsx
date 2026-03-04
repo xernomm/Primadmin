@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Code2, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { StageData } from './ProcessingBlock';
@@ -114,12 +114,12 @@ export default function TabbedResponse({ answer, stageLogs, toolCalls, widget }:
 
                                             {/* Thinking Block */}
                                             {thinking && (
-                                                <div className="mb-2 p-2 rounded-lg bg-violet-500/10 border border-violet-500/20 max-w-full overflow-hidden">
-                                                    <div className="flex items-center gap-1 mb-1 text-xs text-violet-400 font-mono">
-                                                        <span>🧠</span>
-                                                        <span>Thinking</span>
+                                                <div className="mb-2 p-2 rounded-lg bg-hr-accent border border-hr-card max-w-full overflow-hidden">
+                                                    <div className="flex items-center gap-1 mb-1 text-xs text-white/50 font-mono">
+                                                        <Code2 size={12} />
+                                                        <span>[Dependency Placeholder Resolution]</span>
                                                     </div>
-                                                    <div className="text-xs text-zinc-400 font-mono whitespace-pre-wrap break-words overflow-hidden">
+                                                    <div className="prose prose-invert prose-sm max-w-full text-zinc-300 break-words overflow-hidden">
                                                         {thinking}
                                                     </div>
                                                 </div>

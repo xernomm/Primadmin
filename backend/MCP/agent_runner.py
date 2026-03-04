@@ -21,6 +21,7 @@ async def run_agent(
     conversation_id: Optional[int] = None,
     status_callback: Optional[Callable[[str], None]] = None,
     stage_callback: Optional[Callable[[dict], None]] = None,
+    sub_status_callback: Optional[Callable[[dict], None]] = None,
     use_full_pipeline: bool = True,
     session_id: Optional[str] = None
 ) -> dict:
@@ -48,14 +49,16 @@ async def run_agent(
     # Get or create agent instance
     agent = get_agent()
     
+    # Reset stage logs for new conversation turn
+    agent._stage_logs = []
+
     # Update callbacks if provided
     if status_callback:
         agent.status_callback = status_callback
     if stage_callback:
         agent.stage_callback = stage_callback
-    
-    # Reset stage logs for new conversation turn
-    agent._stage_logs = []
+    if sub_status_callback:
+        agent.sub_status_callback = sub_status_callback
     
     # Run the agent
     if use_full_pipeline:

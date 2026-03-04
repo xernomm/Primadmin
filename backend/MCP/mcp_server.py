@@ -56,7 +56,8 @@ from tools.cv_tools import (
     analyze_employee_cv as _analyze_employee_cv,
     summarize_employee_cv as _summarize_employee_cv,
     manage_cv_file as _manage_cv_file,
-    extract_cv_from_file as _extract_cv_from_file
+    extract_cv_from_file as _extract_cv_from_file,
+    update_employee_cv as _update_employee_cv
 )
 from tools.analysis_tools import (
     analyze_attendance_with_policy as _analyze_attendance_with_policy
@@ -349,6 +350,16 @@ def extract_cv_from_file(emp_id: int, file_path: Optional[str] = None) -> dict:
     Jika file_path=None, menggunakan file yang sudah tersimpan di record employee.
     """
     return _extract_cv_from_file(emp_id, file_path)
+
+
+@mcp.tool()
+def update_employee_cv(emp_id: int, updates: dict) -> dict:
+    """
+    Memperbarui/Edit data resume/CV karyawan.
+    Dukungan field: education_level, education_institution, education_major, graduation_year, certifications, skills, work_experience, emergency_contact_name, emergency_contact_phone, emergency_contact_relation, blood_type, religion, ktp_number, npwp_number, bank_name, bank_account_number, bank_account_name, deduction_bpjs_kesehatan, dll.
+    Pastikan emp_id valid sebelum memanggil ini.
+    """
+    return _update_employee_cv(emp_id, updates)
 
 
 # ============================================================================

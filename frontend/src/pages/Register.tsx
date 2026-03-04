@@ -58,13 +58,13 @@ export function Register() {
     const displayError = validationError || error;
 
     return (
-        <div className="min-h-screen w-full flex items-center justify-center p-4 lg:p-12 relative overflow-hidden bg-[#0a0a0aff]">
-            {/* Background Decorations */}
+        <div className="min-h-screen w-full flex items-center justify-center p-4 lg:p-12 relative overflow-hidden bg-hr-dark">
+            {/* Background Decorations 
             <div className="absolute inset-0 opacity-20 pointer-events-none">
                 <img src={LoginBg} alt="" className="w-full h-full object-cover" />
-            </div>
-            <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-primary-600/20 rounded-full blur-[120px] pointer-events-none"></div>
-            <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-violet-600/20 rounded-full blur-[120px] pointer-events-none"></div>
+            </div> */}
+            <div className="absolute top-[20%] left-[-10%] w-[40%] h-[40%] bg-hr-accent rounded-full blur-[100px] pointer-events-none"></div>
+            <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-hr-accent rounded-full blur-[120px] pointer-events-none"></div>
 
             <div className="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-16 items-center relative z-10">
                 {/* Left: Register Box */}

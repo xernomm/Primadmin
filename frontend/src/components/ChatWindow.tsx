@@ -25,11 +25,18 @@ export function ChatWindow({ messages, isLoading, onSuggestionClick, sidebarOpen
         }
         return EMPTY_STAGES;
     });
+    const subEvents = useChatStore((state) => {
+        const targetId = state.processingConversationId ?? state.currentConversationId;
+        if (targetId !== null && state.subStatusByConversation[targetId]) {
+            return state.subStatusByConversation[targetId];
+        }
+        return EMPTY_STAGES;
+    });
 
     const lastMessage = messages[messages.length - 1];
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [messages.length, lastMessage?.content, isLoading, statusText, stageData]);
+    }, [messages.length, lastMessage?.content, isLoading, statusText, stageData, subEvents]);
 
     if (messages.length === 0 && !isLoading) {
         return (
@@ -79,6 +86,7 @@ export function ChatWindow({ messages, isLoading, onSuggestionClick, sidebarOpen
                         <ProcessingBlock
                             stages={stageData}
                             currentStatus={statusText}
+                            subEvents={subEvents}
                         />
                     )}
 

@@ -28,10 +28,11 @@ PROMPT_ESCALATION_TEMPLATE = """Analisis query HR berikut dan ekstrak semua info
 1. **JANGAN minta klarifikasi** — langsung ekstrak dan proses
 2. **Ekstrak semua nilai** — nama, gaji, persentase, email, jabatan, dll
 3. **Hitung multiplier** — "naik 15%" → salary_multiplier: 1.15 | "kurangi 10%" → 0.90
-4. **File attachment** — jika ada path file dilampirkan, isi attachment_file_path
+4. **File attachment** — jika ada path file dilampirkan, isi attachment_file_path.
 5. **recommended_tools** — sarankan tools dari atas sebanyak-banyaknya yang relevan dengan pertanyaan user.
 6. **Waktu/tanggal nyata** — jika query menyebut "hari ini", "sekarang", "bulan ini", "minggu ini", atau konteks waktu apapun, WAJIB sertakan `get_current_time` di `recommended_tools`. JANGAN tebak tanggal.
-7. **Data DB nyata** — jika query membutuhkan data yang belum jelas ada atau tidak (misal: file CV, slip gaji, daftar karyawan), sertakan `list_directory` atau `generate_and_execute_sql` di `recommended_tools` agar agent dapat mengkonfirmasi data nyata dari sistem, bukan mengarang.
+7. **Data DB nyata** — jika query membutuhkan data yang belum jelas ada atau tidak (misal: file CV, slip gaji, daftar karyawan), sertakan `get_employee_files` atau `generate_and_execute_sql` di `recommended_tools` agar agent dapat mengkonfirmasi data nyata dari sistem, bukan mengarang.
+8. **JANGAN TEBAK PATH** — Jika user tidak memberikan path file secara eksplisit (misal: "C:\\..."), JANGAN PERNAH mengarang path (/home/user/..., /uploads/...). Biarkan `attachment_file_path` kosong atau null, dan biarkan Planner menggunakan `get_employee_files` untuk menemukan path yang benar di server.
 
 ## Output JSON
 
@@ -113,15 +114,17 @@ Query Detail: {expanded_query}
     {{"step": N, "name": "get_schema_context", "args": {{}}, "reason": "ambil schema DB untuk SQL generator", "depends_on": null}}
     {{"step": N+1, "name": "generate_and_execute_sql", "args": {{"natural_query": "...", "schema_context": "{{{{step_N.result.schema}}}}"}}, "depends_on": N}}
     ```
-11. **CV FILE WORKFLOW WAJIB**: Untuk operasi yang melibatkan file CV karyawan (`extract_cv_from_file`), WAJIB susun chain berikut:
+11. **CV FILE WORKFLOW WAJIB**: Untuk operasi yang melibatkan file CV karyawan (`extract_cv_from_file`), ikuti pola berikut:
     ```
     Step A: search_employees → dapat emp_id
     Step B: get_employee_files(emp_id=step_A.result.id) → dapat abs_path file CV
     Step C: extract_cv_from_file(emp_id=step_A.result.id, file_path=step_B.result.files.cv.abs_path) → mengembalikan field 'data'
-    Step D: update_employee_by_id(emp_id=step_A.result.id, updates={{step_C.result.data}})
+    Step D: update_employee_cv(emp_id=step_A.result.id, updates={{step_C.result.data}})
     ```
-    JANGAN hardcode path file. JANGAN gunakan list_directory (tool sudah dihapus). SELALU gunakan abs_path dari get_employee_files.
-12. **LANGCHAIN COMPATIBILITY**: Selalu gunakan key `name` (untuk nama tool) dan `args` (untuk argument tool). Ini penting agar response mudah dipahami oleh LangChain MCP adapter.
+    (Gunakan `update_employee_cv` khusus untuk field CV, atau `update_employee_by_id` jika melibatkan field general).
+    JANGAN hardcode path file. JANGAN gunakan list_directory. SELALU gunakan abs_path dari get_employee_files.
+12. **manage_cv_file ARGS**: Jika menggunakan `manage_cv_file`, WAJIB sertakan `emp_id` (integer) dan `action` (upload/replace/delete). Parameter `file_path` wajib hanya untuk action upload/replace.
+13. **LANGCHAIN COMPATIBILITY**: Selalu gunakan key `name` (untuk nama tool) dan `args` (untuk argument tool). Ini penting agar response mudah dipahami oleh LangChain MCP adapter.
 13. **SCOPE TOOLS — LARANGAN KRITIS**: 
     - Plan HANYA boleh menggunakan tools yang ada dalam daftar tool yang tersedia.
     - DILARANG mereferensikan tool yang tidak ada dalam daftar (contoh: search_payroll, get_leaves_history, dll).
@@ -158,7 +161,7 @@ Kamu WAJIB mengembalikan JSON murni dengan struktur berikut. Perhatikan bahwa ke
     }},
     {{
       "step": 4,
-      "name": "update_employee_by_id",
+      "name": "update_employee_cv",
       "args": {{"emp_id": "{{{{step_1.result.id}}}}", "updates": "{{{{step_3.result.data}}}}"}},
       "reason": "simpan data hasil ekstrasi ke database karyawan",
       "depends_on": 3
@@ -231,30 +234,32 @@ Verifikasi sekarang:"""
 # ============================================================================
 # STAGE 5: RESPONSE GENERATION TEMPLATE
 # ============================================================================
-RESPONSE_GENERATION_TEMPLATE = """Buat respons HR yang tepat sasaran berdasarkan hasil tools berikut.
+RESPONSE_GENERATION_TEMPLATE = """
+Anda adalah Primasistant, Asisten HR yang bertugas menjawab pertanyaan dari tim HR atau Karyawan.
+Berikan jawaban yang ramah, profesional, mudah dipahami (non-teknis), dan berfokus HANYA pada penyajian data.
 
-## Pertanyaan User
+## Pertanyaan User:
 {original_query}
 
-## Konteks Percakapan
+## Konteks Percakapan:
 {conversation_context}
 
-## Hasil Tools
+## Data dari Sistem (Fakta & Temuan):
 {tool_results}
 
-## Aturan
-1. **Gunakan HANYA data dari tool results** — jangan mengarang, **TAMPILKAN DATA SELENGKAP-LENGKAPNYA**
-2. **Jawab langsung** pertanyaan user, bukan topik lain
-3. **Format sesuai konteks**:
-   - List karyawan → tabel markdown
-   - Update/write → tampilkan data before/after sebagai konfirmasi (✅)
-   - Statistik → angka bold
-4. **Insight** — tambahkan jika ada pola menarik atau anomali
-5. **Rekomendasi aksi** — jika relevan (1-3 item, skip jika hanya query informational)
-6. **Bahasa** — Indonesia formal, gunakan emoji secukupnya (✅ ❌ 📊 🎯 ⚠️)
-
-Tulis respons sekarang:"""
-
+---
+## Panduan Menjawab:
+1. KELENGKAPAN DATA ADALAH UTAMA: Sajikan setiap angka, nama, tanggal, durasi, dan status yang ditemukan dari sistem secara UTUH. JANGAN meringkas data hingga ada fakta penting yang hilang terpotong.
+2. BAHASA HR/BISNIS, BUKAN TEKNIS: Terjemahkan setiap temuan analisis atau kekurangan data menjadi bahasa HR sehari-hari yang profesional.
+   - ❌ HINDARI mutlak istilah teknis server/kode: "hasil query", "logic error", "join tabel tidak ada", "tool_results gagal", atau "schema database".
+   - ✅ GUNAKAN bahasa konteks bisnis: "Sistem belum mencatat keterkaitan antara cuti dengan surat peringatan", atau "Informasi mengenai lama durasi cuti tidak ditemukan di catatan riwayat bulan ini."
+3. FOKUS PADA "APA" BUKAN "MENGAPA": Jika ada informasi yang terlewat (missing info) atau analisis hitungan yang tidak sesuai, sampaikan secara gamblang ke User tentang *data apa yang kurang/salah* tersebut tanpa perlu menjelaskan kegagalan proses di belakang layar.
+4. MUDAH DIBACA & TERSTRUKTUR:
+   - Selalu gunakan tabel Markdown untuk menyajikan daftar/kumpulan data agar rapi.
+   - Gunakan bullet points untuk memaparkan narasi temuan data yang panjang atau daftar kekurangan data (anomali).
+   - Gunakan emoji (✅, ⚠️, 📄, 👥, 📊) secukupnya agar presentasi data tidak kaku.
+5. JAWAB LANGSUNG: Buka dengan kesimpulan utama terkait pertanyaan user, baru ikuti dengan detail data selengkapnya di bawah.
+"""
 
 # ============================================================================
 # MAIN SYSTEM PROMPT (For tool execution stage)

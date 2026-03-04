@@ -8,7 +8,7 @@
   font-weight: 400;
   color-scheme: dark;
   color: rgba(255, 255, 255, 0.87);
-  background-color: #0f172a;
+  background-color: #0a0a0a;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -23,7 +23,7 @@
 
 body {
   min-height: 100vh;
-  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  background: linear-gradient(135deg, #0a0a0a 0%, #181818 100%);
 }
 
 /* Custom scrollbar */
@@ -33,7 +33,7 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #1e293b;
+  background: #181818;
 }
 
 ::-webkit-scrollbar-thumb {
@@ -53,14 +53,14 @@ body {
 }
 
 .glass-dark {
-  background: rgba(31, 32, 35, 0.8);
+  background: rgba(10, 10, 10, 0.8);
   backdrop-filter: blur(10px);
   border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 /* Gradient text */
 .gradient-text {
-  background: linear-gradient(135deg, #38bdf8 0%, #a855f7 100%);
+  background: linear-gradient(135deg, #ffffff 0%, #a3a3a3 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -131,12 +131,13 @@ body {
 
 /* Message bubbles */
 .message-user {
-  background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+  background: linear-gradient(135deg, #222222 0%, #181818 100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 1rem 1rem 0.25rem 1rem;
 }
 
 .message-assistant {
-  background: rgba(51, 65, 85, 0.5);
+  background: rgba(10, 10, 10, 0.5);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 1rem 1rem 1rem 0.25rem;
 }
@@ -145,7 +146,7 @@ body {
 input:focus,
 textarea:focus {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.5);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.5);
 }
 
 /* Button effects */
@@ -162,7 +163,7 @@ textarea:focus {
   width: 24px;
   height: 24px;
   border: 3px solid rgba(255, 255, 255, 0.1);
-  border-top-color: #38bdf8;
+  border-top-color: #ffffff;
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
@@ -171,7 +172,7 @@ textarea:focus {
   width: 16px;
   height: 16px;
   border: 2px solid rgba(255, 255, 255, 0.1);
-  border-top-color: #38bdf8;
+  border-top-color: #ffffff;
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
@@ -221,11 +222,11 @@ textarea:focus {
 
 /* Glass Glow Effect for Processing Block */
 .glass-glow {
-  background: linear-gradient(135deg, rgba(15, 23, 42, 0.8) 0%, rgba(30, 41, 59, 0.6) 100%);
-  border: 1px solid rgba(56, 189, 248, 0.2);
+  background: linear-gradient(135deg, rgba(24, 24, 24, 0.8) 0%, rgba(10, 10, 10, 0.6) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   box-shadow:
-    0 0 20px rgba(56, 189, 248, 0.1),
-    inset 0 0 40px rgba(56, 189, 248, 0.05);
+    0 0 20px rgba(255, 255, 255, 0.1),
+    inset 0 0 40px rgba(255, 255, 255, 0.05);
   backdrop-filter: blur(12px);
 }
 
@@ -236,15 +237,15 @@ textarea:focus {
   left: 0;
   right: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(56, 189, 248, 0.5), transparent);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5), transparent);
 }
 
 /* Mini Spinner for stages */
 .spinner-mini {
   width: 14px;
   height: 14px;
-  border: 2px solid rgba(56, 189, 248, 0.2);
-  border-top-color: #38bdf8;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #ffffff;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -259,7 +260,7 @@ textarea:focus {
 .typing-dots span {
   width: 4px;
   height: 4px;
-  background: #38bdf8;
+  background: #ffffff;
   border-radius: 50%;
   animation: typing 1.2s infinite both;
 }
@@ -317,7 +318,7 @@ textarea:focus {
 }
 
 .process-content .prose h3 {
-  color: #38bdf8;
+  color: #ffffff;
   font-size: 0.875rem;
   margin-bottom: 0.5rem;
 }

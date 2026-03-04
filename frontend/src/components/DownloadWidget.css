@@ -3,19 +3,19 @@
     align-items: center;
     gap: 12px;
     padding: 12px 16px;
-    background: #f3f4f6;
-    /* Abu-abu terang */
-    border: 1px solid #e2e8f0;
+    background: #181818;
+    /* Abu-abu gelap (hr-accent) */
+    border: 1px solid #333333;
     border-radius: 12px;
     margin: 8px 0;
     transition: all 0.2s ease;
 }
 
 .download-widget:hover {
-    border-color: #cbd5e1;
-    background: #e2e8f0;
+    border-color: #ffffff;
+    background: #222222;
     transform: translateY(-1px);
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 4px 6px -1px rgba(255, 255, 255, 0.1);
 }
 
 .download-widget-icon {
@@ -25,9 +25,9 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: white;
+    background: #0a0a0a;
     border-radius: 8px;
-    border: 1px solid #e2e8f0;
+    border: 1px solid #333333;
 }
 
 .download-widget-icon svg {
@@ -48,7 +48,7 @@
 }
 
 .download-widget-icon .file {
-    color: #4b5563;
+    color: #a3a3a3;
 }
 
 .download-widget-info {
@@ -62,8 +62,8 @@
 .download-widget-filename {
     font-weight: 600;
     font-size: 14px;
-    color: #1e293b;
-    /* Abu-abu gelap/hitam */
+    color: #ffffff;
+    /* Putih */
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -71,7 +71,7 @@
 
 .download-widget-size {
     font-size: 12px;
-    color: #64748b;
+    color: #a3a3a3;
 }
 
 .download-widget-button {
@@ -79,11 +79,11 @@
     align-items: center;
     gap: 6px;
     padding: 8px 16px;
-    background: #334155;
-    /* Abu-abu gelap untuk tombol default */
-    color: white;
+    background: #222222;
+    /* Lighter dark gray for button */
+    color: #ffffff;
     /* Tulisan putih */
-    border: none;
+    border: 1px solid #333333;
     border-radius: 6px;
     /* Radius lebih boxy */
     font-size: 13px;
@@ -94,10 +94,11 @@
 }
 
 .download-widget-button:hover {
-    background: #1e293b;
-    /* Lebih gelap saat hover */
+    background: #dc2626;
+    /* Merah tajam saat hover */
+    border-color: #dc2626;
     transform: translateY(-1px);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 2px 4px rgba(220, 38, 38, 0.2);
 }
 
 .download-widget-button:active {

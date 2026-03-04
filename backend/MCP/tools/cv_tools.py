@@ -461,6 +461,9 @@ def manage_cv_file(emp_id: int, action: str, file_path: Optional[str] = None) ->
                 cur.close(); conn.close()
                 return {"success": False, "error": "Parameter file_path wajib untuk upload/replace."}
             
+            # Clean up the path string just in case LLM added quotes
+            file_path = file_path.strip('\'"')
+            
             # Resolve URL ke absolute path jika input berupa URL (misal dari frontend)
             from config import url_to_abs_path, BASE_URL
             resolved_abs_path = url_to_abs_path(file_path)
@@ -469,17 +472,17 @@ def manage_cv_file(emp_id: int, action: str, file_path: Optional[str] = None) ->
             else:
                 source_path = Path(file_path).resolve()
                 
-            if not source_path.exists():
+            if not source_path.exists() or not source_path.is_file():
                 cur.close(); conn.close()
                 return {
                     "success": False,
-                    "error": f"File tidak ditemukan: {file_path}",
+                    "error": f"File tidak ditemukan atau path adalah sebuah direktori: {file_path}",
                     "debug": {
                         "given_path": file_path,
                         "resolved_path": str(source_path),
                         "cwd": os.getcwd(),
                         "cv_dir": str(CV_DIR),
-                        "hint": f"Pastikan file sudah ada di path. Jika dari frontend, path biasanya berupa URL seperti {BASE_URL}/uploads/cv/namafile.pdf"
+                        "hint": f"Pastikan file_path mengarah ke spesifik file, bukan hanya foldernya."
                     }
                 }
             
@@ -502,14 +505,14 @@ def manage_cv_file(emp_id: int, action: str, file_path: Optional[str] = None) ->
             # else: already in the right place, no copy needed
             
             download_url = f"/api/uploads/cv/{dest_filename}"
-            # Store full server URL in file_path instead of absolute path
-            full_server_url = f"{BASE_URL}{download_url}"
+            # PENTING: Simpan path absolut fisik di file_path, dan URL di download_url
+            db_file_path = str(dest_path)
             
             if cv_row:
                 cur.execute("""
                     UPDATE employee_cv SET file_path = :fp, download_url = :du, updated_at = CURRENT_TIMESTAMP
                     WHERE employee_id = :eid
-                """, {"fp": full_server_url, "du": download_url, "eid": emp_id})
+                """, {"fp": db_file_path, "du": download_url, "eid": emp_id})
             else:
                 # Create CV record if it doesn't exist
                 cur.execute("SELECT name, department, position, basic_salary FROM employees WHERE id = :eid", {"eid": emp_id})
@@ -522,7 +525,7 @@ def manage_cv_file(emp_id: int, action: str, file_path: Optional[str] = None) ->
                     "pos": emp_info[2] if emp_info else None,
                     "dept": emp_info[1] if emp_info else None,
                     "sal": emp_info[3] if emp_info else 0,
-                    "fp": full_server_url,
+                    "fp": db_file_path,
                     "du": download_url
                 })
             
@@ -534,8 +537,9 @@ def manage_cv_file(emp_id: int, action: str, file_path: Optional[str] = None) ->
             return {
                 "success": True,
                 "message": f"File CV {emp_name} berhasil di-{action}.",
-                "file_path": full_server_url,
+                "file_path": db_file_path,
                 "download_url": download_url,
+                "server_url": f"{BASE_URL}{download_url}",
                 "filename": dest_filename,
                 "widget": {
                     "type": "download",
@@ -572,7 +576,16 @@ def _read_file_content(file_path: str) -> str:
                     text += page_text + "\n"
             return text.strip()
         except Exception as e:
-            return f"[Error reading PDF: {e}]"
+            # Fallback: try reading as plain text if PDF parsing fails
+            # This helps with corrupted files or text files with .pdf extension
+            try:
+                with open(str(path), 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read().strip()
+                    if content:
+                        return content
+                return f"[Error reading PDF: {e}]"
+            except Exception:
+                return f"[Error reading PDF: {e}]"
     
     elif ext in (".docx", ".doc"):
         try:
@@ -640,8 +653,12 @@ def extract_cv_from_file(emp_id: int, file_path: Optional[str] = None) -> Dict[s
                 cur.close(); conn.close()
                 return {"success": False, "error": f"Tidak ada file CV untuk {emp_name}. Upload file terlebih dahulu menggunakan manage_cv_file."}
         
+        # Clean up the path string
+        file_path = str(file_path).strip('\'"')
+
         # Resolve server URL to absolute path if needed
         if file_path and (file_path.startswith("http://") or file_path.startswith("https://")):
+            from config import url_to_abs_path
             resolved = url_to_abs_path(file_path)
             if resolved:
                 file_path = str(resolved)
@@ -650,9 +667,13 @@ def extract_cv_from_file(emp_id: int, file_path: Optional[str] = None) -> Dict[s
                 return {"success": False, "error": f"Tidak bisa resolve server URL ke path: {file_path}"}
 
         # Verify file exists
-        if not Path(file_path).exists():
+        file_path_obj = Path(file_path).resolve()
+        if not file_path_obj.exists() or not file_path_obj.is_file():
             cur.close(); conn.close()
-            return {"success": False, "error": f"File tidak ditemukan: {file_path}"}
+            return {"success": False, "error": f"File tidak ditemukan atau path adalah direktori: {file_path}"}
+        
+        # Override file_path with absolute, resolved string
+        file_path = str(file_path_obj)
         
         # Read file content
         file_content = _read_file_content(file_path)
@@ -811,9 +832,140 @@ PENTING: Output HANYA JSON, tanpa penjelasan tambahan."""
         return {"success": False, "error": str(e), "trace": traceback.format_exc()}
 
 
+# ==================== TOOL 6: UPDATE EMPLOYEE CV ====================
+
+def update_employee_cv(emp_id: int, updates: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Update employee CV details by ID.
+    Supports only 'employee_cv' table.
+    
+    Args:
+        emp_id: Employee ID
+        updates: Dict of field names and values to update
+        
+    Valid employee_cv fields: education_level, education_institution, education_major,
+                              graduation_year, certifications, skills, work_experience,
+                              current_position, current_department, current_salary,
+                              emergency_contact_name, emergency_contact_phone,
+                              emergency_contact_relation, blood_type, religion,
+                              ktp_number, npwp_number, bank_name, bank_account_number,
+                              bank_account_name, deduction_bpjs_kesehatan,
+                              deduction_bpjs_ketenagakerjaan, deduction_meal,
+                              deduction_transport, deduction_insurance,
+                              deduction_laptop_installment, deduction_laptop_remaining_months,
+                              deduction_other, deduction_other_description,
+                              total_monthly_deductions, notes        
+    Returns:
+        Dict with success status and message
+    """
+    # Guard: updates must be a non-empty dict
+    if not isinstance(updates, dict) or not updates:
+        return {
+            "success": False,
+            "error": "Parameter 'updates' harus berupa dict yang tidak kosong. Pastikan field dan nilai yang ingin diupdate sudah ditentukan."
+        }
+    
+    # Oracle ORA-01484 fix: Ensure no lists/arrays are passed as bound values to standard SQL
+    for k, v in updates.items():
+        if isinstance(v, list):
+            updates[k] = ", ".join(map(str, v))
+
+    try:
+        conn = _get_connection()
+        cur = conn.cursor()
+        
+        # Get valid columns for employee_cv table (dynamically)
+        cur.execute("SELECT * FROM employee_cv WHERE ROWNUM = 1")
+        valid_cv_columns = set(
+            desc[0].lower() for desc in cur.description
+            if desc[0].lower() not in ["id", "employee_id"]
+        )
+        cv_updates = {k: v for k, v in updates.items() if k.lower() in valid_cv_columns}
+        
+        if not cv_updates:
+            cur.close()
+            conn.close()
+            return {"success": False, "error": "Tidak ada kolom valid yang diperbarui. Periksa nama field yang diberikan."}
+        
+        messages = []
+        
+        # --- Update employee_cv table ---
+        if cv_updates:
+            # Check if CV record exists
+            cur.execute("SELECT id FROM employee_cv WHERE employee_id = :eid", {"eid": emp_id})
+            cv_row = cur.fetchone()
+            
+            if cv_row:
+                cv_updates["emp_id"] = emp_id
+                set_clause = ", ".join(f"{k} = :{k}" for k in cv_updates if k != "emp_id")
+                set_clause += ", updated_at = CURRENT_TIMESTAMP"
+                cur.execute(f"UPDATE employee_cv SET {set_clause} WHERE employee_id = :emp_id", cv_updates)
+                messages.append(f"{len(cv_updates) - 1} field tabel employee_cv")
+            else:
+                # Insert minimal CV record with the given fields
+                cv_updates["employee_id"] = emp_id
+                cols = ", ".join(cv_updates.keys())
+                placeholders = ", ".join(f":{k}" for k in cv_updates.keys())
+                cur.execute(f"INSERT INTO employee_cv ({cols}) VALUES ({placeholders})", cv_updates)
+                messages.append(f"{len(cv_updates) - 1} field tabel employee_cv (record baru dibuat)")
+        
+        conn.commit()
+
+        # -- Re-fetch actual committed values
+        updated_data = {}
+        try:
+            if cv_updates:
+                cv_fields = [k for k in cv_updates if k not in ("emp_id", "employee_id")]
+                if cv_fields:
+                    cur.execute(
+                        f"SELECT {', '.join(cv_fields)} FROM employee_cv WHERE employee_id = :eid",
+                        {"eid": emp_id}
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        for i, field in enumerate(cv_fields):
+                            val = row[i]
+                            updated_data[field] = val.read() if hasattr(val, "read") else val
+        except Exception:
+            pass  # non-critical
+
+        cur.close()
+        conn.close()
+
+        return {
+            "success": True,
+            "message": f"Data resume/CV karyawan ID {emp_id} berhasil diperbarui: {', '.join(messages)}.",
+            "updated_fields": updated_data 
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e), "trace": traceback.format_exc()}
+
 # ==================== TOOL DEFINITIONS ====================
 
 CV_TOOLS = [
+    {
+        "name": "update_employee_cv",
+        "description": (
+            "UPDATE informasi pelengkap (CV) karyawan. "
+            "Gunakan ini untuk menambah/mengubah detail seperti: pendidikan, sertifikasi, keahlian, pengalaman kerja, "
+            "data darurat, nomor rekening, info KTP/NPWP, serta detail potongan bulanan. "
+            "BISA digunakan mandiri walau tidak mengupload file."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "emp_id": {
+                    "type": "integer",
+                    "description": "Database ID karyawan"
+                },
+                "updates": {
+                    "type": "object",
+                    "description": "Field tabel employee_cv yang akan diupdate. Contoh: {\"education_level\": \"S1\", \"bank_name\": \"BCA\", \"total_monthly_deductions\": 500000}"
+                }
+            },
+            "required": ["emp_id", "updates"]
+        }
+    },
     {
         "name": "get_employee_cv",
         "description": "Ambil data CV/profil LENGKAP karyawan termasuk pendidikan, sertifikasi, keahlian, pengalaman kerja, data pribadi (KTP, NPWP, golongan darah), kontak darurat, info bank, dan rincian potongan bulanan (BPJS, asuransi, cicilan laptop, dll).",

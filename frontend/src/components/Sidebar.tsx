@@ -69,7 +69,7 @@ export function Sidebar({ isOpen, onToggle, user, onLogout, onOpenPolicies }: Si
                 {/* Policies Button */}
                 <button
                     onClick={onOpenPolicies}
-                    className="w-full py-2.5 px-4 rounded-lg bg-gradient-to-r from-primary-600/20 to-purple-600/20 border border-primary-500/30 hover:border-primary-500/50 text-slate-200 hover:text-white flex items-center justify-center gap-2 transition-all duration-200"
+                    className="w-full py-2.5 px-4 rounded-lg bg-hr-accent border border-hr-card hover:border-white/20 text-slate-200 hover:text-white flex items-center justify-center gap-2 transition-all duration-200"
                 >
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -122,7 +122,7 @@ export function Sidebar({ isOpen, onToggle, user, onLogout, onOpenPolicies }: Si
             {/* User Profile */}
             <div className="border-t border-slate-700/50 p-3">
                 <div className="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-700/30 transition-colors">
-                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary-500 to-purple-600 flex items-center justify-center text-white font-medium text-sm">
+                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-hr-accent to-hr-highlight flex items-center justify-center text-white font-medium text-sm">
                         {user?.full_name?.charAt(0).toUpperCase() || 'U'}
                     </div>
                     <div className="flex-1 min-w-0">
