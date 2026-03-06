@@ -42,7 +42,7 @@ ESCALATION_MODEL = "qwen3:latest"       # Fast model for JSON parsing/intent
 PLANNING_MODEL = "qwen3:latest"          # Fast model for tool planning (JSON)
 TOOL_MODEL = "qwen3:latest"              # Main model with function calling
 VERIFICATION_MODEL = "qwen3:latest"      # Verification/reasoning
-RESPONSE_MODEL = "qwen2.5:1.5b"          # Reasoning model for final response
+RESPONSE_MODEL = "qwen3:latest"          # Reasoning model for final response
 SQL_MODEL = "qwen2.5-coder:latest"       # SQL-specific model
 
 # Maximum iterations for tool execution loop

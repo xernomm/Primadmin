@@ -1,4 +1,4 @@
-import { Code2, useState } from 'react';
+import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { StageData } from './ProcessingBlock';
@@ -10,9 +10,10 @@ interface TabbedResponseProps {
     stageLogs?: StageData[];
     toolCalls?: number;
     widget?: WidgetData;
+    isStreaming?: boolean;
 }
 
-export default function TabbedResponse({ answer, stageLogs, toolCalls, widget }: TabbedResponseProps) {
+export default function TabbedResponse({ answer, stageLogs, toolCalls, widget, isStreaming }: TabbedResponseProps) {
     const [activeTab, setActiveTab] = useState<'answer' | 'process'>('answer');
 
     // Parse thinking content helper (duplicated from ProcessingBlock to keep self-contained or could be moved to utils)
@@ -80,9 +81,27 @@ export default function TabbedResponse({ answer, stageLogs, toolCalls, widget }:
             <div className="tab-content">
                 {activeTab === 'answer' && (
                     <div className="prose prose-invert max-w-none prose-sm font-medium tracking-tight text-zinc-100">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {answer}
-                        </ReactMarkdown>
+                        {/* Generating indicator when answer is empty but streaming */}
+                        {!answer && isStreaming && (
+                            <div className="flex items-center gap-3 py-4 animate-fade-in">
+                                <div className="relative flex h-2.5 w-2.5">
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary-400 opacity-75"></span>
+                                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-primary-500"></span>
+                                </div>
+                                <span className="text-sm text-zinc-400 font-normal">Generating response...</span>
+                            </div>
+                        )}
+
+                        {answer && (
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                {answer}
+                            </ReactMarkdown>
+                        )}
+
+                        {/* Streaming cursor */}
+                        {answer && isStreaming && (
+                            <span className="inline-block w-1.5 h-4 bg-primary-500 ml-0.5 animate-pulse" />
+                        )}
 
                         {/* Download Widget */}
                         {widget && widget.type === 'download' && (
@@ -116,7 +135,7 @@ export default function TabbedResponse({ answer, stageLogs, toolCalls, widget }:
                                             {thinking && (
                                                 <div className="mb-2 p-2 rounded-lg bg-hr-accent border border-hr-card max-w-full overflow-hidden">
                                                     <div className="flex items-center gap-1 mb-1 text-xs text-white/50 font-mono">
-                                                        <Code2 size={12} />
+                                                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
                                                         <span>[Dependency Placeholder Resolution]</span>
                                                     </div>
                                                     <div className="prose prose-invert prose-sm max-w-full text-zinc-300 break-words overflow-hidden">

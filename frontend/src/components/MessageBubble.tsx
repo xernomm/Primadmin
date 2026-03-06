@@ -2,6 +2,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Message } from '../types';
 import TabbedResponse from './TabbedResponse';
+import { useChatStore } from '../store/chatStore';
 import PrimaLogo from '../img/primalogo.png';
 
 interface MessageBubbleProps {
@@ -20,7 +21,7 @@ function parseFileAttachment(content: string): { cleanContent: string; filePath:
 
     const filePath = match[1].trim();
     const cleanContent = content.replace(match[0], '').trim();
-    // Extract filename from path (handle both / and \)
+    // Extract filename from path (handle both / and \\)
     const fileName = filePath.split(/[/\\]/).pop() || filePath;
     const fileExt = fileName.includes('.') ? fileName.split('.').pop()?.toLowerCase() || null : null;
 
@@ -40,6 +41,12 @@ function FileIcon({ ext }: { ext: string | null }) {
 
 export function MessageBubble({ message }: MessageBubbleProps) {
     const isUser = message.role === 'user';
+
+    // Determine if this assistant message is currently streaming
+    const isStreaming = useChatStore((state) => {
+        if (isUser) return false;
+        return state.isGeneratingResponse && state._pendingAssistantId === message.id;
+    });
 
     // Parse file attachment from user messages
     const { cleanContent: userCleanContent, fileName, fileExt } = isUser
@@ -107,6 +114,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                                     stageLogs={message.metadata?.stage_logs}
                                     toolCalls={message.tool_calls?.length || message.metadata?.total_tool_calls}
                                     widget={message.metadata?.widget}
+                                    isStreaming={isStreaming}
                                 />
                             )}
 

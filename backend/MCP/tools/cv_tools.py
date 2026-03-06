@@ -834,14 +834,15 @@ PENTING: Output HANYA JSON, tanpa penjelasan tambahan."""
 
 # ==================== TOOL 6: UPDATE EMPLOYEE CV ====================
 
-def update_employee_cv(emp_id: int, updates: Dict[str, Any]) -> Dict[str, Any]:
+def update_employee_cv(emp_id: int, updates: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]:
     """
     Update employee CV details by ID.
     Supports only 'employee_cv' table.
     
     Args:
         emp_id: Employee ID
-        updates: Dict of field names and values to update
+        updates: Dict of field names and values to update (optional)
+        **kwargs: The columns to update, directly as keyword arguments
         
     Valid employee_cv fields: education_level, education_institution, education_major,
                               graduation_year, certifications, skills, work_experience,
@@ -858,17 +859,20 @@ def update_employee_cv(emp_id: int, updates: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Dict with success status and message
     """
-    # Guard: updates must be a non-empty dict
-    if not isinstance(updates, dict) or not updates:
+    actual_updates = updates or {}
+    actual_updates.update({k: v for k, v in kwargs.items() if v is not None})
+    
+    # Guard: must be a non-empty dict
+    if not actual_updates:
         return {
             "success": False,
-            "error": "Parameter 'updates' harus berupa dict yang tidak kosong. Pastikan field dan nilai yang ingin diupdate sudah ditentukan."
+            "error": "Parameter update tidak boleh kosong. Pastikan field dan nilai yang ingin diupdate sudah ditentukan."
         }
     
     # Oracle ORA-01484 fix: Ensure no lists/arrays are passed as bound values to standard SQL
-    for k, v in updates.items():
+    for k, v in actual_updates.items():
         if isinstance(v, list):
-            updates[k] = ", ".join(map(str, v))
+            actual_updates[k] = ", ".join(map(str, v))
 
     try:
         conn = _get_connection()
@@ -880,7 +884,7 @@ def update_employee_cv(emp_id: int, updates: Dict[str, Any]) -> Dict[str, Any]:
             desc[0].lower() for desc in cur.description
             if desc[0].lower() not in ["id", "employee_id"]
         )
-        cv_updates = {k: v for k, v in updates.items() if k.lower() in valid_cv_columns}
+        cv_updates = {k: v for k, v in actual_updates.items() if k.lower() in valid_cv_columns}
         
         if not cv_updates:
             cur.close()
@@ -946,10 +950,11 @@ CV_TOOLS = [
     {
         "name": "update_employee_cv",
         "description": (
-            "UPDATE informasi pelengkap (CV) karyawan. "
-            "Gunakan ini untuk menambah/mengubah detail seperti: pendidikan, sertifikasi, keahlian, pengalaman kerja, "
-            "data darurat, nomor rekening, info KTP/NPWP, serta detail potongan bulanan. "
-            "BISA digunakan mandiri walau tidak mengupload file."
+            "UPDATE informasi PELENGKAP (Tabel employee_cv) karyawan. "
+            "Gunakan ini SAJA (bukan update_employee_by_id) untuk mengupdate/menambah detail seperti: "
+            "Pendidikan, institusi, jurusan, tahun lulus, sertifikasi, keahlian, pengalaman kerja, "
+            "data darurat, agama, KTP/NPWP, nomor rekening bank, serta SEMUA DETAIL POTONGAN BULANAN (BPJS, makan, transport, cicilan, dll). "
+            "Data ini akan tertaut langsung ke profil CV & HR keryawan."
         ),
         "parameters": {
             "type": "object",
@@ -958,12 +963,39 @@ CV_TOOLS = [
                     "type": "integer",
                     "description": "Database ID karyawan"
                 },
-                "updates": {
-                    "type": "object",
-                    "description": "Field tabel employee_cv yang akan diupdate. Contoh: {\"education_level\": \"S1\", \"bank_name\": \"BCA\", \"total_monthly_deductions\": 500000}"
-                }
+                "education_level": {"type": "string", "description": "Tingkat Pendidikan (contoh: S1, SMA)"},
+                "education_institution": {"type": "string", "description": "Nama Universitas / Sekolah"},
+                "education_major": {"type": "string", "description": "Jurusan Utama"},
+                "graduation_year": {"type": "integer", "description": "Tahun Lulus (contoh: 2022)"},
+                "certifications": {"type": "string", "description": "Daftar Sertifikasi (teks bebas)"},
+                "skills": {"type": "string", "description": "Daftar Keahlian/Skill (teks bebas)"},
+                "work_experience": {"type": "string", "description": "Riwayat Pengalaman Kerja (teks bebas)"},
+                "current_position": {"type": "string", "description": "Posisi Saat Ini di CV"},
+                "current_department": {"type": "string", "description": "Departemen Saat Ini di CV"},
+                "current_salary": {"type": "number", "description": "Gaji Saat Ini di CV (angka)"},
+                "emergency_contact_name": {"type": "string", "description": "Nama Kontak Darurat"},
+                "emergency_contact_phone": {"type": "string", "description": "No Telepon Kontak Darurat"},
+                "emergency_contact_relation": {"type": "string", "description": "Hubungan Kontak Darurat (contoh: Istri)"},
+                "blood_type": {"type": "string", "description": "Golongan Darah (A, B, AB, O)"},
+                "religion": {"type": "string", "description": "Agama"},
+                "ktp_number": {"type": "string", "description": "Nomor KTP/NIK (string)"},
+                "npwp_number": {"type": "string", "description": "Nomor NPWP (string)"},
+                "bank_name": {"type": "string", "description": "Nama Bank (contoh: BCA, Mandiri)"},
+                "bank_account_number": {"type": "string", "description": "Nomor Rekening Bank (string)"},
+                "bank_account_name": {"type": "string", "description": "Nama Pemilik Rekening Bank"},
+                "deduction_bpjs_kesehatan": {"type": "number", "description": "Potongan UANG BPJS Kesehatan (angka)"},
+                "deduction_bpjs_ketenagakerjaan": {"type": "number", "description": "Potongan UANG BPJS Ketenagakerjaan (angka)"},
+                "deduction_meal": {"type": "number", "description": "Potongan Uang Makan (angka)"},
+                "deduction_transport": {"type": "number", "description": "Potongan Uang Transport (angka)"},
+                "deduction_insurance": {"type": "number", "description": "Potongan Asuransi Lain (angka)"},
+                "deduction_laptop_installment": {"type": "number", "description": "Potongan Cicilan Laptop (angka)"},
+                "deduction_laptop_remaining_months": {"type": "integer", "description": "Sisa Bulan Cicilan Laptop (angka)"},
+                "deduction_other": {"type": "number", "description": "Potongan Lainnya (angka)"},
+                "deduction_other_description": {"type": "string", "description": "Deskripsi Potongan Lainnya"},
+                "total_monthly_deductions": {"type": "number", "description": "Total Potongan (angka)"},
+                "notes": {"type": "string", "description": "Catatan Tambahan"}
             },
-            "required": ["emp_id", "updates"]
+            "required": ["emp_id"]
         }
     },
     {

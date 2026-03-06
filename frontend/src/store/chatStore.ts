@@ -30,6 +30,7 @@ interface ChatState {
     conversations: Conversation[];
     currentConversationId: number | null;
     isLoading: boolean;
+    isGeneratingResponse: boolean;  // true when Stage 5 starts (transition to TabbedResponse)
     error: string | null;
     statusText: string;
     socket: Socket | null;
@@ -37,6 +38,7 @@ interface ChatState {
     stageDataByConversation: Record<number, StageData[]>;
     subStatusByConversation: Record<number, SubStatusEvent[]>;
     processingConversationId: number | null;
+    _pendingAssistantId: number | null;  // ID of the pre-created assistant message for stage 5
 
     initSocket: () => void;
     disconnectSocket: () => void;
@@ -57,6 +59,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     conversations: [],
     currentConversationId: null,
     isLoading: false,
+    isGeneratingResponse: false,
     error: null,
     statusText: '',
     socket: null,
@@ -64,6 +67,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     stageDataByConversation: {},
     subStatusByConversation: {},
     processingConversationId: null,
+    _pendingAssistantId: null,
 
     initSocket: () => {
         const existingSocket = get().socket;
@@ -119,6 +123,34 @@ export const useChatStore = create<ChatState>((set, get) => ({
                         }
                     };
                 });
+
+                // ── Stage 5 transition: pre-create assistant message & switch view ──
+                if (data.stage === 5) {
+                    const alreadyPending = get()._pendingAssistantId;
+                    if (!alreadyPending) {
+                        const pendingId = Date.now();
+                        // Collect stage logs from stages 1-4 for the Process tab
+                        const allStages = get().stageDataByConversation[processingId] || [];
+                        const stageLogs = allStages
+                            .filter(s => s.stage > 0 && s.stage < 5)
+                            .map(s => ({ stage: s.stage, name: s.name, content: s.content, status: s.status }));
+
+                        set((state) => ({
+                            isGeneratingResponse: true,
+                            _pendingAssistantId: pendingId,
+                            messages: [...state.messages, {
+                                id: pendingId,
+                                role: 'assistant' as const,
+                                content: '',
+                                thinking: '',
+                                created_at: new Date().toISOString(),
+                                metadata: {
+                                    stage_logs: stageLogs,
+                                },
+                            }],
+                        }));
+                    }
+                }
             }
         });
 
@@ -183,6 +215,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
             set((state) => ({
                 error: data.message,
                 isLoading: false,
+                isGeneratingResponse: false,
+                _pendingAssistantId: null,
                 stageDataByConversation: processingId !== null
                     ? { ...state.stageDataByConversation, [processingId]: [] }
                     : state.stageDataByConversation,
@@ -250,13 +284,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         };
 
         const assistantMessageId = Date.now();
-        const initialAssistantMessage: Message = {
-            id: assistantMessageId,
-            role: 'assistant',
-            content: '',
-            thinking: '',
-            created_at: new Date().toISOString(),
-        };
 
         set((state) => ({
             messages: [...state.messages, userMessage]
@@ -270,10 +297,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
             });
 
             socket!.once('chat_response', async (response: any) => {
-                // Add assistant message now that we have a response
-                set((state) => ({
-                    messages: [...state.messages, initialAssistantMessage]
-                }));
+                // Use pre-created assistant message from Stage 5 if available,
+                // otherwise create a new one
+                const pendingId = get()._pendingAssistantId;
+                const targetMsgId = pendingId || assistantMessageId;
+
+                if (!pendingId) {
+                    // No stage 5 pre-creation happened (e.g. simple query), add message now
+                    set((state) => ({
+                        messages: [...state.messages, {
+                            id: targetMsgId,
+                            role: 'assistant' as const,
+                            content: '',
+                            thinking: '',
+                            created_at: new Date().toISOString(),
+                        }]
+                    }));
+                }
 
                 if (response.error) {
                     set({ error: response.error, isLoading: false, statusText: '' });
@@ -308,7 +348,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
                     set((state) => ({
                         messages: state.messages.map(msg =>
-                            msg.id === assistantMessageId
+                            msg.id === targetMsgId
                                 ? { ...msg, content: mainContent, thinking: thinkContent }
                                 : msg
                         )
@@ -325,9 +365,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     }
                 }
 
+                // Merge stage_logs: prefer pre-collected logs (from stage 5 creation)
+                // and fallback to response.stage_logs
+                const existingMsg = get().messages.find(m => m.id === targetMsgId);
+                const mergedStageLogs = existingMsg?.metadata?.stage_logs || response.stage_logs;
+
                 set((state) => ({
                     messages: state.messages.map(msg =>
-                        msg.id === assistantMessageId
+                        msg.id === targetMsgId
                             ? {
                                 ...msg,
                                 content: response.response,
@@ -335,17 +380,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
                                 tool_calls: response.tool_calls,
                                 metadata: {
                                     ...response.metadata,
-                                    stage_logs: response.stage_logs,  // Include stage logs for Process tab
+                                    stage_logs: mergedStageLogs,
                                     total_tool_calls: response.metadata?.total_tool_calls,
-                                    widget: response.metadata?.widget  // Include widget data for download button
+                                    widget: response.metadata?.widget
                                 }
                             }
                             : msg
                     ),
                     currentConversationId: response.conversation_id,
                     isLoading: false,
+                    isGeneratingResponse: false,
+                    _pendingAssistantId: null,
                     statusText: '',
-                    processingConversationId: null  // Clear processing state
+                    processingConversationId: null
                 }));
 
                 get().loadConversations();
@@ -444,6 +491,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // Reset UI state immediately without waiting for backend
         set((state) => ({
             isLoading: false,
+            isGeneratingResponse: false,
+            _pendingAssistantId: null,
             statusText: '',
             processingConversationId: null,
             stageDataByConversation: processingConversationId !== null

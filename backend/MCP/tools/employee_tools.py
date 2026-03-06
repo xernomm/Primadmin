@@ -253,14 +253,15 @@ CV_TABLE_COLUMNS = {
 }
 
 
-def update_employee_by_id(emp_id: int, updates: Dict[str, Any]) -> Dict[str, Any]:
+def update_employee_by_id(emp_id: int, updates: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]:
     """
     Update employee details by ID.
     Supports fields from the 'employees' table.
     
     Args:
         emp_id: Employee ID
-        updates: Dict of field names and values to update
+        updates: Dict of field names and values to update (optional)
+        **kwargs: The columns to update, directly as keyword arguments
         
     Valid employees fields: position, address, status, basic_salary, phone, email,
                             marital_status, department, employment_status, sp_level,
@@ -269,18 +270,21 @@ def update_employee_by_id(emp_id: int, updates: Dict[str, Any]) -> Dict[str, Any
     Returns:
         Dict with success status and message
     """
-    # Guard: updates must be a non-empty dict
-    if not isinstance(updates, dict) or not updates:
+    actual_updates = updates or {}
+    actual_updates.update({k: v for k, v in kwargs.items() if v is not None})
+    
+    # Guard: must be a non-empty dict
+    if not actual_updates:
         return {
             "success": False,
-            "error": "Parameter 'updates' harus berupa dict yang tidak kosong. Pastikan field dan nilai yang ingin diupdate sudah ditentukan."
+            "error": "Parameter update tidak boleh kosong. Pastikan field dan nilai yang ingin diupdate sudah ditentukan."
         }
     
     # Oracle ORA-01484 fix: Ensure no lists/arrays are passed as bound values to standard SQL
     # Convert lists to comma-separated strings
-    for k, v in updates.items():
+    for k, v in actual_updates.items():
         if isinstance(v, list):
-            updates[k] = ", ".join(map(str, v))
+            actual_updates[k] = ", ".join(map(str, v))
 
     try:
         conn = _get_connection()
@@ -292,7 +296,7 @@ def update_employee_by_id(emp_id: int, updates: Dict[str, Any]) -> Dict[str, Any
             desc[0].lower() for desc in cur.description
             if desc[0].lower() not in ["id", "employee_code"]
         )
-        emp_updates = {k: v for k, v in updates.items() if k.lower() in valid_emp_columns}
+        emp_updates = {k: v for k, v in actual_updates.items() if k.lower() in valid_emp_columns}
         
         if not emp_updates:
             cur.close()
@@ -696,7 +700,7 @@ EMPLOYEE_TOOLS = [
     },
     {
         "name": "update_employee_by_id",
-        "description": "Update data karyawan (hanya tabel employees). HARUS gunakan emp_id (database ID integer), BUKAN employee_code. Field tabel employees: position, address, status, basic_salary, phone, email, marital_status, department, employment_status, sp_level, remaining_leave, bpjs_number, joined_at.",
+        "description": "UPDATE data UTAMA karyawan (hanya tabel employees). HARUS gunakan emp_id (database ID integer). Gunakan tool ini HANYA untuk update informasi inti pegawai seperti: posisi, departemen, alamat, gaji pokok (basic_salary), email, telepon, status pernikahan, status kepegawaian, BPJS number, sisa cuti, dan tanggal bergabung. DILARANG menggunakan tool ini untuk data CV atau potongan gaji bulanan (gunakan update_employee_cv untuk itu).",
         "parameters": {
             "type": "object",
             "properties": {
@@ -704,12 +708,21 @@ EMPLOYEE_TOOLS = [
                     "type": "integer",
                     "description": "Database ID karyawan (integer). BUKAN employee_code! Dapatkan dari search_employees."
                 },
-                "updates": {
-                    "type": "object",
-                    "description": "Object berisi field dan nilai baru. Contoh: {\"position\": \"Manager\", \"basic_salary\": 15000000}"
-                }
+                "position": {"type": "string", "description": "Jabatan/Posisi (contoh: 'Manager')"},
+                "department": {"type": "string", "description": "Departemen (contoh: 'IT')"},
+                "status": {"type": "string", "description": "Status karyawan (contoh: 'active')"},
+                "employment_status": {"type": "string", "description": "Status kepegawaian (contoh: 'Tetap', 'Kontrak')"},
+                "basic_salary": {"type": "number", "description": "Gaji Pokok (angka)"},
+                "phone": {"type": "string", "description": "Nomor Telepon"},
+                "email": {"type": "string", "description": "Alamat Email"},
+                "address": {"type": "string", "description": "Alamat Lengkap"},
+                "marital_status": {"type": "string", "description": "Status Pernikahan (contoh: 'Menikah', 'Belum Menikah')"},
+                "sp_level": {"type": "integer", "description": "Tingkat Surat Peringatan (SP) 0-3"},
+                "remaining_leave": {"type": "integer", "description": "Sisa Cuti (hari)"},
+                "bpjs_number": {"type": "string", "description": "Nomor Kartu BPJS (Bukan nilai potongan uangnya)"},
+                "joined_at": {"type": "string", "description": "Tanggal Bergabung (format YYYY-MM-DD)"}
             },
-            "required": ["emp_id", "updates"]
+            "required": ["emp_id"]
         }
     },
     {
