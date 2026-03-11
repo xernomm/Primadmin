@@ -272,29 +272,6 @@ def update_leaves(emp_id: int, updates: dict) -> dict:
     return _update_leaves(emp_id, updates)
 
 
-# ============================================================================
-# SQL GENERATOR TOOL
-# ============================================================================
-
-@mcp.tool()
-def generate_and_execute_sql(
-    natural_query: str,
-    execute: bool = True,
-    limit: int = 100
-) -> dict:
-    """
-    [ADVANCED] Generator & Eksekutor SQL Oracle Otomatis.
-    Gunakan tool ini sebagai "Senjata Pamungkas" jika tool spesifik lain tidak tersedia. 
-    Sangat ampuh untuk:
-    1. Query Agregasi: Count, Sum, Avg (e.g., "Total gaji per departemen", "Rata-rata cuti").
-    2. Cross-Table Joins: Menghubungkan karyawan dengan absensi, cuti, atau peringatan.
-    3. Filter Kompleks: Kondisi WHERE yang rumit (e.g., "Karyawan tetap yang join > 2 tahun lalu").
-    4. Bulk Updates/Deletes: "Ubah status semua karyawan magang menjadi kontrak".
-    
-    Jangan gunakan untuk query simpel yang sudah ada tool-nya (seperti search employee by name).
-    """
-    return _generate_and_execute_sql(natural_query, execute, limit)
-
 
 # ============================================================================
 # CV TOOLS

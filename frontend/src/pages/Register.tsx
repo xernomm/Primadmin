@@ -191,8 +191,8 @@ export function Register() {
 
                 {/* Right: Branding Section */}
                 <div className="hidden lg:flex flex-col items-center lg:items-start text-center lg:text-left order-1 lg:order-2">
-                    <div className="mb-8 p-4 rounded-3xl bg-white/5 border border-white/10 inline-block animate-pulse-glow">
-                        <img src={PrimaLogo} alt="Primassistant Logo" className="w-20 h-20 object-contain" />
+                    <div className="mb-8 flex w-full justify-center lg:justify-start">
+                        <img src={PrimaLogo} alt="Primassistant Logo" className="w-1/2 md:w-48 lg:w-64 object-contain" />
                     </div>
                     <h1 className="text-5xl lg:text-6xl font-black text-white mb-6 tracking-tight">
                         Primassistant<span className="text-primary-500">.</span>
@@ -201,17 +201,17 @@ export function Register() {
                         <p className="text-xl text-zinc-400 leading-relaxed">
                             Manajemen SDM masa depan dimulai hari ini. Daftarkan tim Anda sekarang.
                         </p>
-                        <div className="mt-10 p-6 rounded-3xl bg-white/5 border border-white/5 backdrop-blur-md">
-                            <div className="flex items-center gap-4 text-left">
-                                <div className="p-3 rounded-2xl bg-primary-500/10 text-primary-400">
-                                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04kM12 21a9.003 9.003 0 008.354-5.646L12 13.5l-8.354 1.854A9.003 9.003 0 0012 21z" />
-                                    </svg>
-                                </div>
-                                <div>
-                                    <p className="text-white font-bold">Keamanan Terjamin</p>
-                                    <p className="text-sm text-zinc-500">Data Anda dilindungi enkripsi standar industri tingkat tinggi.</p>
-                                </div>
+                        <div className="mt-10 flex gap-4">
+                            <div className="flex -space-x-3 overflow-hidden">
+                                {[1, 2, 3, 4].map(i => (
+                                    <div key={i} className="inline-block h-10 w-10 rounded-full ring-2 ring-zinc-900 bg-zinc-800 flex items-center justify-center text-[10px] font-bold text-zinc-500">
+                                        HR
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="text-sm">
+                                <p className="text-white font-bold font-mono">Powered by Qwen & MCP</p>
+                                <p className="text-zinc-500">Agentic Orchestrator, qwen3 & qwen2.5-coder</p>
                             </div>
                         </div>
                     </div>

@@ -2,7 +2,6 @@ import { useState, FormEvent } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import PrimaLogo from '../img/primalogo.png';
-import LoginBg from '../img/login_bg_decoration.png';
 
 export function Login() {
     const navigate = useNavigate();
@@ -138,8 +137,8 @@ export function Login() {
 
                 {/* Right: Branding Section */}
                 <div className="hidden lg:flex flex-col items-center lg:items-start text-center lg:text-left order-1 lg:order-2">
-                    <div className="mb-8 p-4 rounded-3xl bg-white/5 border border-white/10 inline-block animate-pulse-glow">
-                        <img src={PrimaLogo} alt="Primassistant Logo" className="w-20 h-20 object-contain" />
+                    <div className="mb-8 flex w-full justify-center lg:justify-start">
+                        <img src={PrimaLogo} alt="Primassistant Logo" className="w-1/2 md:w-48 lg:w-64 object-contain" />
                     </div>
                     <h1 className="text-5xl lg:text-6xl font-black text-white mb-6 tracking-tight">
                         Primassistant<span className="text-primary-500">.</span>
@@ -157,8 +156,8 @@ export function Login() {
                                 ))}
                             </div>
                             <div className="text-sm">
-                                <p className="text-white font-bold font-mono">10+ Model AI Terintegrasi</p>
-                                <p className="text-zinc-500">Siap membantu operasional harian</p>
+                                <p className="text-white font-bold font-mono">Powered by Qwen & MCP</p>
+                                <p className="text-zinc-500">Agentic Orchestrator, qwen3 & qwen2.5-coder</p>
                             </div>
                         </div>
                     </div>
