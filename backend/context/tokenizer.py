@@ -2,6 +2,7 @@
 Tokenizer module using tiktoken.
 Provides token counting and text truncation utilities.
 """
+# pyrefly: ignore [missing-import]
 import tiktoken
 from typing import List, Dict, Optional
 

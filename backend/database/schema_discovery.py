@@ -28,9 +28,8 @@ engine = create_engine(db_url)
 # ============================================================================
 
 TABLE_DESCRIPTIONS = {
-    "EMPLOYEES": "Data master karyawan. Menyimpan info personal, jabatan, gaji, status SP (surat peringatan), dan sisa cuti.",
-    "WARNINGS": "Riwayat surat peringatan (SP1/SP2/SP3) yang diberikan ke karyawan. Terhubung ke employees via employee_id. Gunakan tabel ini untuk cek berapa kali karyawan mendapat SP.",
-    "ATTENDANCE": "Data absensi/kehadiran harian karyawan. Satu record per karyawan per hari.",
+    "EMPLOYEES": "Data master karyawan. Menyimpan info personal, jabatan, gaji, status SP, dan sisa cuti (kolom remaining_leave). TIDAK ADA tabel 'leaves' khusus, sisa jatah cuti ada di sini.",
+    "ATTENDANCE": "Log kehadiran harian, termasuk riwayat cuti. Jika status='leave', berarti karyawan tersebut sedang cuti pada tanggal tersebut. Gunakan tabel ini untuk melihat riwayat atau tanggal cuti.",
     "HR_USERS": "User akun HR yang login ke sistem (bukan karyawan). Menyimpan kredensial login.",
     "CONVERSATIONS": "Riwayat percakapan chat antara HR user dan assistant.",
     "MESSAGES": "Pesan individual dalam sebuah conversation.",
@@ -41,7 +40,7 @@ TABLE_DESCRIPTIONS = {
 COLUMN_DESCRIPTIONS = {
     "EMPLOYEES": {
         "SP_LEVEL": "Level Surat Peringatan saat ini (0=bersih, 1=SP1, 2=SP2, 3=SP3). SP3 = sebelum PHK/pemecatan.",
-        "REMAINING_LEAVE": "Sisa jatah cuti tahunan (default 12 hari per tahun).",
+        "REMAINING_LEAVE": "Sisa jatah cuti tahunan (default 12 hari per tahun). INI ADALAH SATU-SATUNYA DATA CUTI YANG TERSEDIA.",
         "EMPLOYMENT_STATUS": "Status kepegawaian: 'tetap', 'kontrak', 'magang'.",
         "STATUS": "Status aktif karyawan: 'active', 'inactive', 'terminated'.",
         "BASIC_SALARY": "Gaji pokok bulanan dalam Rupiah (IDR).",
@@ -59,7 +58,7 @@ COLUMN_DESCRIPTIONS = {
     },
     "ATTENDANCE": {
         "WORK_LOCATION": "Lokasi kerja: 'WFO' (Work From Office) atau 'WFH' (Work From Home).",
-        "STATUS": "Status kehadiran (status_kehadiran): 'present'=hadir, 'late'=terlambat, 'sick'=sakit, 'absent'=tidak hadir, 'permit'=izin.",
+        "STATUS": "Status kehadiran (status_kehadiran): 'present'=hadir, 'late'=terlambat, 'sick'=sakit, 'absent'=tidak hadir, 'leave'=cuti, 'permit'=izin. Gunakan 'leave' untuk cek riwayat cuti.",
         "CHECK_IN": "Waktu jam masuk kerja. Untuk menghitung KETERLAMBATAN (tidak ada kolom khusus): bandingkan CHECK_IN dengan jam standar masuk (08:00).",
         "CHECK_OUT": "Waktu jam pulang kerja.",
         "ATTENDANCE_DATE": "Tanggal kehadiran (satu record per hari per karyawan).",
@@ -301,17 +300,8 @@ class SchemaDiscovery:
 - check_in: TIMESTAMP
 - check_out: TIMESTAMP
 - work_location: VARCHAR2(20) -- WFO, WFH
-- status: VARCHAR2(20) -- present, late, sick, absent
+- status: VARCHAR2(20) -- present, late, sick, absent, leave
 - notes: CLOB
-
-## Table: {self.schema}.leaves
-- id: NUMBER PRIMARY KEY
-- employee_id: NUMBER REFERENCES employees(id)
-- leave_type: VARCHAR2(50)
-- start_date: DATE
-- end_date: DATE
-- reason: CLOB
-- status: VARCHAR2(20) -- pending, approved, rejected
 
 """
 

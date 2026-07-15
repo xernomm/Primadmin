@@ -6,7 +6,7 @@ Handles:
 - Single tool execution via MCP SSE client
 - Planned tool execution with dependency resolution
 - SQL fallback for failed DB tools
-- Ollama native function calling fallback
+- Gemini native function calling fallback
 """
 import json
 import re
@@ -16,7 +16,7 @@ import time
 import os
 from typing import Dict, List, Any, Optional, Callable
 
-import ollama
+from agent.gemini_client import gemini_chat_with_tools
 
 from agent.core import TOOL_MODEL, MCP_SERVER_URL, MAX_TOOL_ITERATIONS
 from agent.prompt_templates import get_tool_definitions
@@ -64,8 +64,36 @@ def sanitize_arguments(args: Any) -> Any:
 def resolve_nested_path(data: Any, path_parts: List[str]) -> Any:
     """
     Resolve a nested dot-path from a tool result.
-    Supports arbitrary depth with case-insensitive matching and deep-search fallback.
+    Supports arbitrary depth with case-insensitive matching, field aliases, and deep-search fallback.
     """
+    ALIASES = {
+        "FULL_NAME": ["NAME", "FULL_NAME", "EMPLOYEE_NAME"],
+        "EMPLOYEE_NAME": ["NAME", "FULL_NAME", "EMPLOYEE_NAME"],
+        "NAME": ["NAME", "FULL_NAME", "EMPLOYEE_NAME"],
+        "POSITION": ["POSITION", "JOB_TITLE", "ROLE", "CURRENT_POSITION"],
+        "DEPT": ["DEPARTMENT", "DEPT", "CURRENT_DEPARTMENT"],
+        "DEPARTMENT": ["DEPARTMENT", "DEPT", "CURRENT_DEPARTMENT"],
+        "PHONE": ["PHONE", "PHONE_NUMBER", "TELEPON", "NO_HP", "TELP"],
+        "PHONE_NUMBER": ["PHONE", "PHONE_NUMBER", "TELEPON", "NO_HP", "TELP"],
+        "MOBILE": ["PHONE", "PHONE_NUMBER", "TELEPON", "NO_HP", "TELP"],
+        "EMAIL": ["EMAIL", "EMAIL_ADDRESS"],
+        "EMAIL_ADDRESS": ["EMAIL", "EMAIL_ADDRESS"],
+        "SALARY": ["BASIC_SALARY", "SALARY", "GAJI"],
+        "BASIC_SALARY": ["BASIC_SALARY", "SALARY", "GAJI"],
+        "MESSAGE": ["BODY", "MESSAGE", "CONTENT", "TEXT"],
+        "BODY": ["BODY", "MESSAGE", "CONTENT", "TEXT"],
+        "CONTENT": ["BODY", "MESSAGE", "CONTENT", "TEXT"],
+    }
+
+    def _get_candidates(part: str) -> List[str]:
+        part_upper = part.upper()
+        cands = [part]
+        if part_upper in ALIASES:
+            for alias in ALIASES[part_upper]:
+                if alias.lower() != part.lower():
+                    cands.append(alias)
+        return cands
+
     def _walk(node, parts):
         current = node
         for part in parts:
@@ -73,8 +101,9 @@ def resolve_nested_path(data: Any, path_parts: List[str]) -> Any:
                 return None
             if isinstance(current, dict):
                 matched = None
+                cands = [p.lower() for p in _get_candidates(part)]
                 for k, v in current.items():
-                    if k.lower() == part.lower():
+                    if k.lower() in cands:
                         matched = v
                         break
                 current = matched
@@ -83,8 +112,9 @@ def resolve_nested_path(data: Any, path_parts: List[str]) -> Any:
                     current = current[0]
                     if isinstance(current, dict):
                         matched = None
+                        cands = [p.lower() for p in _get_candidates(part)]
                         for k, v in current.items():
-                            if k.lower() == part.lower():
+                            if k.lower() in cands:
                                 matched = v
                                 break
                         current = matched
@@ -98,8 +128,9 @@ def resolve_nested_path(data: Any, path_parts: List[str]) -> Any:
 
     def _deep_search(node, target_key):
         if isinstance(node, dict):
+            cands = [p.lower() for p in _get_candidates(target_key)]
             for k, v in node.items():
-                if k.lower() == target_key.lower() and not isinstance(v, (dict, list)):
+                if k.lower() in cands and not isinstance(v, (dict, list)):
                     return v
             for v in node.values():
                 result = _deep_search(v, target_key)
@@ -208,18 +239,10 @@ async def retry_with_sql_fallback(tool_name, original_args, error_msg, state, ma
         'create_employee': 'INSERT karyawan baru',
         'delete_employee_by_id': 'DELETE karyawan',
         'update_absensi': 'UPDATE data absensi',
-        'update_leaves': 'UPDATE data cuti',
-        'filter_employees_by_status': 'SELECT karyawan berdasarkan status',
-        'filter_employees_by_position': 'SELECT karyawan berdasarkan posisi',
         'search_employees': 'SELECT cari data karyawan',
         'get_employee_by_id': 'SELECT detail lengkap karyawan spesifik',
         'get_all_employees': 'SELECT semua daftar karyawan',
-        'get_today_attendance': 'SELECT data log absensi HARI INI',
-        'get_today_late_employees': 'SELECT karyawan yang TERLAMBAT HARI INI',
-        'get_today_remote_employees': 'SELECT karyawan yang bekerja REMOTE HARI INI',
-        'get_today_onsite_employees': 'SELECT karyawan yang bekerja di KANTOR HARI INI',
-        'get_employee_leave_by_id': 'SELECT data riwayat cuti karyawan spesifik',
-        'get_all_employee_leaves': 'SELECT semua data cuti karyawan',
+        'get_attendance': 'SELECT data log absensi karyawan',
         'get_employee_cv': 'SELECT semua data riwayat profil pendidikan pengalaman skill CV karyawan',
     }
     action = action_map.get(tool_name, f"Execute {tool_name}")
@@ -293,12 +316,8 @@ async def retry_with_sql_fallback(tool_name, original_args, error_msg, state, ma
 
 DB_TOOLS = [
     'update_employee_by_id', 'create_employee', 'delete_employee_by_id',
-    'update_absensi', 'update_leaves', 'filter_employees_by_status',
-    'filter_employees_by_position', 'filter_employees_salary_above',
-    'filter_employees_salary_below', 'search_employees', 'get_employee_by_id',
-    'get_all_employees', 'get_today_attendance', 'get_today_late_employees',
-    'get_today_remote_employees', 'get_today_onsite_employees',
-    'get_employee_leave_by_id', 'get_all_employee_leaves', 'get_employee_cv'
+    'update_absensi', 'search_employees', 'get_employee_by_id',
+    'get_all_employees', 'get_attendance', 'get_employee_cv'
 ]
 
 SKIP_FALLBACK_PHRASES = [
@@ -426,6 +445,18 @@ async def execute_planned_tools(state, ctx):
 
 def _resolve_placeholder(key, value, arguments, results_by_step, depends_on, state):
     """Resolve a single {{step_N.result.field}} placeholder. Returns True if unresolved."""
+    # Entire step result placeholder (e.g., {{step_N.result}})
+    entire_match = re.match(r'{{step_(\d+)\.result}}$', value)
+    if entire_match:
+        dep_step = int(entire_match.group(1))
+        if dep_step in results_by_step:
+            resolved_value = results_by_step[dep_step]
+            arguments[key] = resolved_value
+            print(f"[PLACEHOLDER] Resolved entire result {value} -> {resolved_value}")
+            return False
+        print(f"[PLACEHOLDER] Step {dep_step} not in results yet")
+        return True
+
     # Simple placeholder
     simple_match = re.match(r'{{step_(\d+)\.result\.(\w+)}}$', value)
     if simple_match:
@@ -434,17 +465,51 @@ def _resolve_placeholder(key, value, arguments, results_by_step, depends_on, sta
         if dep_step in results_by_step:
             dep_result = normalize_result_keys(results_by_step[dep_step])
             resolved_value = None
+
+            # Smart helper to fetch value using aliases
+            def _get_val_with_aliases(obj, field):
+                if not isinstance(obj, dict):
+                    return None
+                if field in obj:
+                    return obj[field]
+                # Try aliases
+                aliases_map = {
+                    "FULL_NAME": ["NAME", "FULL_NAME", "EMPLOYEE_NAME"],
+                    "EMPLOYEE_NAME": ["NAME", "FULL_NAME", "EMPLOYEE_NAME"],
+                    "NAME": ["NAME", "FULL_NAME", "EMPLOYEE_NAME"],
+                    "POSITION": ["POSITION", "JOB_TITLE", "ROLE", "CURRENT_POSITION"],
+                    "DEPT": ["DEPARTMENT", "DEPT", "CURRENT_DEPARTMENT"],
+                    "DEPARTMENT": ["DEPARTMENT", "DEPT", "CURRENT_DEPARTMENT"],
+                    "PHONE": ["PHONE", "PHONE_NUMBER", "TELEPON", "NO_HP", "TELP"],
+                    "PHONE_NUMBER": ["PHONE", "PHONE_NUMBER", "TELEPON", "NO_HP", "TELP"],
+                    "MOBILE": ["PHONE", "PHONE_NUMBER", "TELEPON", "NO_HP", "TELP"],
+                    "EMAIL": ["EMAIL", "EMAIL_ADDRESS"],
+                    "EMAIL_ADDRESS": ["EMAIL", "EMAIL_ADDRESS"],
+                    "SALARY": ["BASIC_SALARY", "SALARY", "GAJI"],
+                    "BASIC_SALARY": ["BASIC_SALARY", "SALARY", "GAJI"],
+                    "MESSAGE": ["BODY", "MESSAGE", "CONTENT", "TEXT"],
+                    "BODY": ["BODY", "MESSAGE", "CONTENT", "TEXT"],
+                    "CONTENT": ["BODY", "MESSAGE", "CONTENT", "TEXT"],
+                }
+                if field in aliases_map:
+                    for alias in aliases_map[field]:
+                        if alias in obj:
+                            return obj[alias]
+                # Lowercase fallback
+                if field.lower() in obj:
+                    return obj[field.lower()]
+                return None
+
             if isinstance(dep_result, dict):
                 if "DATA" in dep_result:
                     data = dep_result["DATA"]
                     if isinstance(data, list) and len(data) > 0:
-                        resolved_value = data[0].get(dep_field)
+                        resolved_value = _get_val_with_aliases(data[0], dep_field)
                     elif isinstance(data, dict):
-                        resolved_value = data.get(dep_field)
+                        resolved_value = _get_val_with_aliases(data, dep_field)
                 else:
-                    resolved_value = dep_result.get(dep_field)
-                    if resolved_value is None:
-                        resolved_value = dep_result.get(dep_field.lower())
+                    resolved_value = _get_val_with_aliases(dep_result, dep_field)
+
             if resolved_value is not None:
                 arguments[key] = resolved_value
                 print(f"[PLACEHOLDER] Resolved {value} -> {resolved_value}")
@@ -503,16 +568,42 @@ def _resolve_placeholder(key, value, arguments, results_by_step, depends_on, sta
         print(f"[PLACEHOLDER] Step {dep_step} not in results yet")
         return True
 
+    # Embedded/substring placeholders (e.g., "Welcome to {{step_2.result.full_name}}")
+    embedded_placeholders = re.findall(r'{{step_(\d+)\.result\.([\w.]+)}}', value)
+    if embedded_placeholders:
+        new_value = value
+        unresolved_any = False
+        for dep_step_str, path_str in embedded_placeholders:
+            dep_step = int(dep_step_str)
+            if dep_step in results_by_step:
+                path_parts = path_str.split('.')
+                resolved = resolve_nested_path(results_by_step[dep_step], path_parts)
+                if resolved is not None:
+                    new_value = new_value.replace(f"{{{{step_{dep_step_str}.result.{path_str}}}}}", str(resolved))
+                else:
+                    unresolved_any = True
+            else:
+                unresolved_any = True
+        
+        if not unresolved_any:
+            arguments[key] = new_value
+            print(f"[PLACEHOLDER] Resolved embedded string '{value}' -> '{new_value}'")
+            return False
+        else:
+            arguments[key] = new_value
+            print(f"[PLACEHOLDER] Partially resolved/unresolved embedded string: {new_value}")
+            return True
+
     print(f"[PLACEHOLDER] Unrecognized placeholder format: {value}")
     return True
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# OLLAMA NATIVE FUNCTION CALLING FALLBACK
+# GEMINI NATIVE FUNCTION CALLING FALLBACK
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def execute_with_ollama_function_calling(state, ctx):
-    """Execute tools using Ollama's native function calling. Extracted from HRAgent."""
+    """Execute tools using Gemini's native function calling (fallback when no plan exists)."""
     messages = ctx.prompt_builder.build(
         user_query=state.escalated_query or state.original_query,
         include_schema=True,
@@ -525,16 +616,18 @@ async def execute_with_ollama_function_calling(state, ctx):
         iterations += 1
         try:
             response = await asyncio.to_thread(
-                ollama.chat, model=TOOL_MODEL,
-                messages=messages, tools=tools,
-                options={"temperature": 0.3, "num_predict": 100000},
+                gemini_chat_with_tools,
+                messages=messages,
+                tools=tools,
+                model=TOOL_MODEL,
+                temperature=0.3,
             )
-            message = response.get("message", {})
-            tool_calls = message.get("tool_calls", [])
+            tool_calls = response.get("tool_calls", [])
+            content = response.get("content", "")
 
             if not tool_calls:
-                state.final_response = message.get("content", "")
-                log_debug("DEBUG: Stage 3 (Ollama) Final Content", state.final_response)
+                state.final_response = content
+                log_debug("DEBUG: Stage 3 (Gemini) Final Content", state.final_response)
                 break
 
             for tool_call in tool_calls:
@@ -551,15 +644,16 @@ async def execute_with_ollama_function_calling(state, ctx):
                     "args": func_args, "arguments": func_args, "result": result,
                 })
                 state.total_tool_calls += 1
-                messages.append({"role": "assistant", "content": "", "tool_calls": [tool_call]})
-                messages.append({"role": "tool", "content": json.dumps(result, ensure_ascii=False)})
+                # Append results back for next iteration
+                messages.append({"role": "assistant", "content": f"Calling tool: {func_name}"})
+                messages.append({"role": "user", "content": f"[Tool Result for {func_name}]: {json.dumps(result, ensure_ascii=False, default=str)}"})
 
         except Exception as e:
             print(f"[STAGE 3 ERROR] {e}")
             state.error = str(e)
             break
 
-    state.stages_completed.append("execution_ollama")
+    state.stages_completed.append("execution_gemini")
     stage3_content = state.final_response if state.final_response else "Tools dieksekusi, melanjutkan ke generasi jawaban."
     ctx.emit_stage(3, "Eksekusi Tools", stage3_content, "complete")
     return state

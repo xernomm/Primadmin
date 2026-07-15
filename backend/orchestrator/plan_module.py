@@ -3,7 +3,7 @@ Plan Module — Stage 2: Tool Planning.
 Extracted from HRAgent._stage_2_plan_tools.
 """
 import asyncio
-import ollama
+from agent.gemini_client import gemini_chat
 
 from agent.core import PLANNING_MODEL
 from orchestrator._utils import parse_json_response, log_debug
@@ -31,17 +31,15 @@ async def run_planning(state, ctx):
             tool_hints=tool_hints,
         )
 
-        response = await asyncio.to_thread(
-            ollama.chat,
-            model=PLANNING_MODEL,
+        content = await asyncio.to_thread(
+            gemini_chat,
             messages=messages,
-            options={"temperature": 0.3, "num_predict": 80000},
+            model=PLANNING_MODEL,
+            temperature=0.3,
         )
 
         prompt_len = sum(len(m.get("content", "")) for m in messages)
         print(f"[STAGE 2 DEBUG] Prompt length: {prompt_len} chars | Model: {PLANNING_MODEL}")
-
-        content = response.get("message", {}).get("content", "")
         log_debug("DEBUG: Stage 2 Raw Response (Plan)", content)
 
         parsed = parse_json_response(content)

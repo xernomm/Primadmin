@@ -12,7 +12,7 @@ import cx_Oracle
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 
-import ollama
+from agent.gemini_client import gemini_chat
 
 load_dotenv()
 
@@ -26,8 +26,8 @@ dsn = cx_Oracle.makedsn(ORACLE_HOST, ORACLE_PORT, service_name=ORACLE_SERVICE)
 db_url = f"oracle+cx_oracle://{ORACLE_USER}:{ORACLE_PASSWORD}@{dsn}"
 engine = create_engine(db_url)
 
-# SQL generation model (qwen2.5-coder for better SQL understanding)
-SQL_MODEL = "qwen2.5-coder:latest"
+# SQL generation model
+SQL_MODEL = "gemini-2.5-flash"
 
 # Allowed tables for queries
 ALLOWED_TABLES = [
@@ -90,7 +90,6 @@ def is_safe_query(sql: str) -> Tuple[bool, str]:
     if not any(sql_upper.startswith(op) for op in allowed_starts):
         return False, "Query must start with SELECT, INSERT, UPDATE, or DELETE"
     
-    # Check if query references any valid table
     valid_tables = get_allowed_tables()
     table_found = False
     
@@ -103,10 +102,27 @@ def is_safe_query(sql: str) -> Tuple[bool, str]:
         if table.upper() in sql_upper:
             table_found = True
             break
-            
-    if not table_found:
-        return False, f"Query does not reference any known tables. Allowed: {', '.join(valid_tables[:3])}..."
+        
+    valid_tables_upper = [t.upper() for t in valid_tables]
+    tables_in_query = set()
     
+    # Extract table names following FROM and JOIN clauses
+    matches = re.findall(r'\b(?:FROM|INTO|UPDATE|JOIN)\s+([A-Z0-9_]+)\b', sql_upper)
+    for m in matches:
+        if m not in ('SELECT', 'DUAL'):
+            tables_in_query.add(m)
+            
+    if not tables_in_query:
+        # Fallback to simple heuristic if regex misses
+        table_found = any(table.upper() in sql_upper for table in valid_tables)
+        if not table_found:
+            return False, f"Query does not reference any known tables. Allowed: {', '.join(valid_tables[:3])}..."
+    else:
+        # Check if every extracted table is in the valid tables list
+        for t in tables_in_query:
+            if t not in valid_tables_upper:
+                return False, f"Query references UNKNOWN table: '{t}'. You MUST ONLY use the allowed tables: {', '.join(valid_tables)}. DO NOT hallucinate tables!"
+                
     return True, "Query is safe"
 
 
@@ -252,6 +268,9 @@ ALLOWED OPERATIONS: SELECT, INSERT, UPDATE, DELETE
 
 {schema}
 
+## VALID TABLES (ONLY use these — any other table name will be REJECTED)
+{valid_tables}
+
 ## USER REQUEST
 {natural_query}
 
@@ -266,7 +285,11 @@ ALLOWED OPERATIONS: SELECT, INSERT, UPDATE, DELETE
 7. **Quotes**: Use single quotes `'` for string literals. Double quotes `"` are for identifiers only.
 8. **NO SEMICOLONS**: Do NOT include semicolons at the end of queries. Oracle dynamic SQL rejects them.
 9. **NO BIND PARAMETERS**: Do NOT use `:param_name` syntax (e.g., `:emp_id`, `:name`). Always use actual literal values directly in the query.
-10. **USE ONLY EXISTING TABLES**: Only reference tables shown in the schema above. Do NOT invent or hallucinate table names like 'warning_letters', 'leave_requests', etc.
+10. **TABLE NAMES — ZERO TOLERANCE**: You may ONLY use the tables listed in VALID TABLES above. Tables like 'leaves', 'leave_requests', 'warning_letters', 'cuti' DO NOT EXIST. If you use any table not in the valid list, the query WILL BE REJECTED.
+11. **CUTI / LEAVE DATA**:
+    - Data cuti (sisa saldo): kolom `REMAINING_LEAVE` di tabel `EMPLOYEES`.
+    - Riwayat cuti (kapan/tanggal cuti): tabel `ATTENDANCE` dengan filter `STATUS = 'leave'`.
+    - TABEL 'leaves' ATAU 'cuti' TIDAK ADA. JANGAN PERNAH MENGGUNAKANNYA.
 
 ## GENERAL RULES
 1. Use proper JOINs (LEFT/INNER) with aliases (e.g., `e` for employees).
@@ -288,13 +311,60 @@ Response: DELETE FROM attendance WHERE employee_id = 10 AND TRUNC(attendance_dat
 Request: "Berapa rata-rata gaji per status kepegawaian?"
 Response: SELECT status, AVG(basic_salary) as avg_salary, COUNT(*) as count FROM employees GROUP BY status ORDER BY avg_salary DESC
 
-Request: "Kurangi gaji Rafael Richie 15%"
-Response: UPDATE employees SET basic_salary = basic_salary * 0.85 WHERE UPPER(name) LIKE '%RAFAEL RICHIE%'
+Request: "Tampilkan sisa cuti karyawan departemen IT"
+Response: SELECT id, name, department, remaining_leave FROM employees WHERE UPPER(department) LIKE '%IT%' FETCH FIRST 100 ROWS ONLY
 
+Request: "Karyawan mana yang sudah izin/sakit bulan ini?"
+Response: SELECT e.name, a.attendance_date, a.status, a.notes FROM employees e JOIN attendance a ON e.id = a.employee_id WHERE a.status IN ('sick', 'permit') AND TRUNC(a.attendance_date, 'MM') = TRUNC(SYSDATE, 'MM') FETCH FIRST 100 ROWS ONLY
+
+{correction_context}
 Now generate the SQL query for the user's request. Return ONLY the SQL query:"""
 
+SQL_CORRECTION_PROMPT = """## ⚠️ PREVIOUS ATTEMPT FAILED
+Your previous SQL query was REJECTED with this error:
+```
+{error}
+```
+Previous (invalid) SQL:
+```sql
+{previous_sql}
+```
+You MUST fix this error. Do NOT repeat the same mistake. Generate a CORRECTED query using ONLY the valid tables listed above."""
 
-def generate_sql_with_llm(natural_query: str, model: str = None, schema_context: str = None) -> Dict[str, Any]:
+
+def _clean_sql_response(content: str) -> str:
+    """Extract and clean SQL from LLM response text."""
+    sql = content.strip()
+    # Remove markdown code blocks if present
+    sql = re.sub(r'^```sql\s*\n?', '', sql, flags=re.IGNORECASE)
+    sql = re.sub(r'^```\s*\n?', '', sql)
+    sql = re.sub(r'\n?```$', '', sql)
+    sql = sql.strip()
+    
+    # Extract just the SQL statement
+    lines = sql.split('\n')
+    sql_lines = []
+    in_query = False
+    
+    for line in lines:
+        line_stripped = line.strip().upper()
+        if any(line_stripped.startswith(op) for op in ['SELECT', 'INSERT', 'UPDATE', 'DELETE']):
+            in_query = True
+        if in_query:
+            sql_lines.append(line)
+            if line.strip().endswith(';'):
+                break
+    
+    sql = '\n'.join(sql_lines).strip()
+    
+    # Ensure query ends with semicolon
+    if sql and not sql.endswith(';'):
+        sql += ';'
+    
+    return sql
+
+
+def generate_sql_with_llm(natural_query: str, model: str = None, schema_context: str = None, correction_context: str = "") -> Dict[str, Any]:
     """
     Generate SQL query using LLM with full Oracle schema context.
     
@@ -302,6 +372,7 @@ def generate_sql_with_llm(natural_query: str, model: str = None, schema_context:
         natural_query: Natural language query
         model: LLM model to use (default: qwen2.5-coder:latest)
         schema_context: Optional pre-fetched schema string. If None, fetches internally.
+        correction_context: Optional error feedback from a previous failed attempt.
         
     Returns:
         Dict with generated SQL and metadata
@@ -313,53 +384,26 @@ def generate_sql_with_llm(natural_query: str, model: str = None, schema_context:
     if not schema_context:
         schema_context = get_oracle_schema_context()
     
+    # Build valid tables list for explicit injection into prompt
+    valid_tables = get_allowed_tables()
+    valid_tables_str = ", ".join(valid_tables) if valid_tables else "(could not load tables)"
+    
     # Build prompt
     prompt = SQL_GENERATION_PROMPT.format(
         schema=schema_context,
-        natural_query=natural_query
+        natural_query=natural_query,
+        valid_tables=valid_tables_str,
+        correction_context=correction_context
     )
     
     try:
-        # Call LLM
-        response = ollama.chat(
+        # Call LLM using Gemini
+        content = gemini_chat(
             model=model,
             messages=[{"role": "user", "content": prompt}],
-            options={
-                "temperature": 0.1,  # Low temperature for deterministic SQL
-                "top_p": 0.9,
-                "num_predict": 500
-            }
+            temperature=0.1,
         )
-        
-        content = response.get("message", {}).get("content", "")
-        
-        # Clean up the response
-        sql = content.strip()
-        # Remove markdown code blocks if present
-        sql = re.sub(r'^```sql\s*\n?', '', sql, flags=re.IGNORECASE)
-        sql = re.sub(r'^```\s*\n?', '', sql)
-        sql = re.sub(r'\n?```$', '', sql)
-        sql = sql.strip()
-        
-        # Extract just the SQL statement
-        lines = sql.split('\n')
-        sql_lines = []
-        in_query = False
-        
-        for line in lines:
-            line_stripped = line.strip().upper()
-            if any(line_stripped.startswith(op) for op in ['SELECT', 'INSERT', 'UPDATE', 'DELETE']):
-                in_query = True
-            if in_query:
-                sql_lines.append(line)
-                if line.strip().endswith(';'):
-                    break
-        
-        sql = '\n'.join(sql_lines).strip()
-        
-        # Ensure query ends with semicolon
-        if sql and not sql.endswith(';'):
-            sql += ';'
+        sql = _clean_sql_response(content)
         
         return {
             "success": True,
@@ -383,6 +427,9 @@ def generate_sql_with_llm_with_schema(natural_query: str, schema_context: str) -
     return generate_sql_with_llm(natural_query, schema_context=schema_context)
 
 
+MAX_SQL_RETRIES = 3
+
+
 def generate_and_execute_sql(
     natural_query: str,
     execute: bool = True,
@@ -391,6 +438,8 @@ def generate_and_execute_sql(
 ) -> Dict[str, Any]:
     """
     Convert natural language to SQL using LLM and optionally execute.
+    Includes auto-retry: if the generated SQL is rejected (bad table, syntax error),
+    the error is fed back to the LLM for self-correction (up to 3 attempts).
     
     Args:
         natural_query: Natural language query (e.g., "Tampilkan semua karyawan IT")
@@ -406,30 +455,78 @@ def generate_and_execute_sql(
     if not schema_context:
         schema_context = get_oracle_schema_context()
 
-    # Generate SQL using LLM
-    generation_result = generate_sql_with_llm_with_schema(natural_query, schema_context)
-    
-    if not generation_result.get("success"):
-        return generation_result
-    
-    generated_sql = generation_result["generated_sql"]
-    
-    # Prepare result
-    result = {
+    correction_context = ""
+    last_error = None
+    last_sql = None
+
+    for attempt in range(1, MAX_SQL_RETRIES + 1):
+        print(f"[SQL_GENERATOR] Attempt {attempt}/{MAX_SQL_RETRIES} for: {natural_query[:80]}")
+
+        # Generate SQL using LLM (with optional correction feedback)
+        generation_result = generate_sql_with_llm(
+            natural_query,
+            schema_context=schema_context,
+            correction_context=correction_context
+        )
+
+        if not generation_result.get("success"):
+            return generation_result
+
+        generated_sql = generation_result["generated_sql"]
+        last_sql = generated_sql
+
+        # --- Safety check BEFORE execution ---
+        is_safe, safety_reason = is_safe_query(generated_sql)
+        if not is_safe:
+            last_error = safety_reason
+            print(f"[SQL_GENERATOR] Safety check FAILED (attempt {attempt}): {safety_reason}")
+            # Build correction context for next attempt
+            correction_context = SQL_CORRECTION_PROMPT.format(
+                error=safety_reason,
+                previous_sql=generated_sql
+            )
+            continue  # retry with feedback
+
+        # --- Execute if requested ---
+        result = {
+            "natural_query": natural_query,
+            "generated_sql": generated_sql,
+            "model": generation_result.get("model"),
+            "attempt": attempt
+        }
+
+        if execute:
+            execution_result = execute_safe_sql(generated_sql, limit)
+            result.update(execution_result)
+
+            # If execution failed (e.g. ORA-00942), retry with error feedback
+            if not execution_result.get("success"):
+                last_error = execution_result.get("error", "Unknown execution error")
+                print(f"[SQL_GENERATOR] Execution FAILED (attempt {attempt}): {last_error}")
+                correction_context = SQL_CORRECTION_PROMPT.format(
+                    error=last_error,
+                    previous_sql=generated_sql
+                )
+                continue  # retry with feedback
+
+            # Success!
+            print(f"[SQL_GENERATOR] SUCCESS on attempt {attempt}")
+            return result
+        else:
+            result["executed"] = False
+            result["message"] = "SQL generated but not executed. Set execute=True to run."
+            return result
+
+    # All retries exhausted
+    print(f"[SQL_GENERATOR] All {MAX_SQL_RETRIES} attempts FAILED")
+    return {
         "natural_query": natural_query,
-        "generated_sql": generated_sql,
-        "model": generation_result.get("model")
+        "generated_sql": last_sql,
+        "success": False,
+        "error": f"SQL generation failed after {MAX_SQL_RETRIES} attempts. Last error: {last_error}",
+        "executed": False,
+        "attempts": MAX_SQL_RETRIES
     }
-    
-    # Execute if requested
-    if execute:
-        execution_result = execute_safe_sql(generated_sql, limit)
-        result.update(execution_result)
-    else:
-        result["executed"] = False
-        result["message"] = "SQL generated but not executed. Set execute=True to run."
-    
-    return result
 
 
 # Tool definitions for agent
@@ -458,6 +555,7 @@ Sangat ampuh untuk:
 
 ⚠️ WAJIB: Selalu tambahkan step get_schema_context sebelum tool ini dan gunakan hasilnya sebagai schema_context.
 Jangan gunakan untuk query simpel yang sudah ada tool-nya (seperti search employee by name).
+CATATAN PENTING: Jika user meminta data yang tidak ada detailnya (contoh: detail tabel cuti/leaves), GAGALKAN atau sesuaikan query dengan data yang ADA SAJA (misal hanya sisa cuti di tabel employees). Jangan berhalusinasi tabel.
 """,
         "parameters": {
             "type": "object",

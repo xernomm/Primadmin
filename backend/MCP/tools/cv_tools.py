@@ -13,7 +13,7 @@ from typing import Dict, Any, Optional
 from pathlib import Path
 import cx_Oracle
 from dotenv import load_dotenv
-import ollama
+from agent.gemini_client import gemini_generate
 
 load_dotenv()
 
@@ -26,7 +26,7 @@ ORACLE_SERVICE = os.getenv("ORACLE_SERVICE_NAME")
 dsn = cx_Oracle.makedsn(ORACLE_HOST, ORACLE_PORT, service_name=ORACLE_SERVICE)
 
 # LLM Model for analysis
-ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "granite4:350m")
+ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "gemini-2.5-flash")
 
 # CV file storage — import from centralized config
 import sys
@@ -267,13 +267,12 @@ Berikan analisa dalam format JSON:
   "compensation_assessment": "penilaian kompensasi"
 }}"""
 
-        response = ollama.generate(
+        analysis_text = gemini_generate(
             model=ANALYSIS_MODEL,
             prompt=analysis_prompt,
-            options={"temperature": 0.3}
+            temperature=0.3,
+            response_mime_type="application/json"
         )
-        
-        analysis_text = response.get("response", "")
         
         # Parse JSON
         json_match = re.search(r'\{[\s\S]*\}', analysis_text)
@@ -386,13 +385,11 @@ Buat rangkuman yang mencakup:
 4. Informasi kompensasi dan potongan
 5. Highlight atau catatan penting"""
         
-        response = ollama.generate(
+        result_text = gemini_generate(
             model=ANALYSIS_MODEL,
             prompt=prompt,
-            options={"temperature": 0.3}
+            temperature=0.3
         )
-        
-        result_text = response.get("response", "")
         
         return {
             "success": True,
@@ -730,19 +727,16 @@ Contoh output jika hanya menemukan pendidikan dan skill:
 PENTING: Output HANYA JSON, tanpa penjelasan tambahan."""
 
         try:
-            response = ollama.generate(
+            llm_output = gemini_generate(
                 model=ANALYSIS_MODEL,
                 prompt=extraction_prompt,
-                options={"temperature": 0.1}  # Low temp for factual extraction
+                temperature=0.1,
+                response_mime_type="application/json"
             )
         except Exception as oe:
             cur.close(); conn.close()
             error_msg = str(oe)
-            if "not found" in error_msg.lower():
-                error_msg = f"Model '{ANALYSIS_MODEL}' tidak ditemukan di Ollama. Silakan jalankan 'ollama pull {ANALYSIS_MODEL}'."
-            return {"success": False, "error": f"Ollama generation failed: {error_msg}"}
-        
-        llm_output = response.get("response", "")
+            return {"success": False, "error": f"Gemini generation failed: {error_msg}"}
         
         # Parse JSON from LLM response
         json_match = re.search(r'\{[\s\S]*\}', llm_output)
@@ -948,57 +942,6 @@ def update_employee_cv(emp_id: int, updates: Optional[Dict[str, Any]] = None, **
 
 CV_TOOLS = [
     {
-        "name": "update_employee_cv",
-        "description": (
-            "UPDATE informasi PELENGKAP (Tabel employee_cv) karyawan. "
-            "Gunakan ini SAJA (bukan update_employee_by_id) untuk mengupdate/menambah detail seperti: "
-            "Pendidikan, institusi, jurusan, tahun lulus, sertifikasi, keahlian, pengalaman kerja, "
-            "data darurat, agama, KTP/NPWP, nomor rekening bank, serta SEMUA DETAIL POTONGAN BULANAN (BPJS, makan, transport, cicilan, dll). "
-            "Data ini akan tertaut langsung ke profil CV & HR keryawan."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "emp_id": {
-                    "type": "integer",
-                    "description": "Database ID karyawan"
-                },
-                "education_level": {"type": "string", "description": "Tingkat Pendidikan (contoh: S1, SMA)"},
-                "education_institution": {"type": "string", "description": "Nama Universitas / Sekolah"},
-                "education_major": {"type": "string", "description": "Jurusan Utama"},
-                "graduation_year": {"type": "integer", "description": "Tahun Lulus (contoh: 2022)"},
-                "certifications": {"type": "string", "description": "Daftar Sertifikasi (teks bebas)"},
-                "skills": {"type": "string", "description": "Daftar Keahlian/Skill (teks bebas)"},
-                "work_experience": {"type": "string", "description": "Riwayat Pengalaman Kerja (teks bebas)"},
-                "current_position": {"type": "string", "description": "Posisi Saat Ini di CV"},
-                "current_department": {"type": "string", "description": "Departemen Saat Ini di CV"},
-                "current_salary": {"type": "number", "description": "Gaji Saat Ini di CV (angka)"},
-                "emergency_contact_name": {"type": "string", "description": "Nama Kontak Darurat"},
-                "emergency_contact_phone": {"type": "string", "description": "No Telepon Kontak Darurat"},
-                "emergency_contact_relation": {"type": "string", "description": "Hubungan Kontak Darurat (contoh: Istri)"},
-                "blood_type": {"type": "string", "description": "Golongan Darah (A, B, AB, O)"},
-                "religion": {"type": "string", "description": "Agama"},
-                "ktp_number": {"type": "string", "description": "Nomor KTP/NIK (string)"},
-                "npwp_number": {"type": "string", "description": "Nomor NPWP (string)"},
-                "bank_name": {"type": "string", "description": "Nama Bank (contoh: BCA, Mandiri)"},
-                "bank_account_number": {"type": "string", "description": "Nomor Rekening Bank (string)"},
-                "bank_account_name": {"type": "string", "description": "Nama Pemilik Rekening Bank"},
-                "deduction_bpjs_kesehatan": {"type": "number", "description": "Potongan UANG BPJS Kesehatan (angka)"},
-                "deduction_bpjs_ketenagakerjaan": {"type": "number", "description": "Potongan UANG BPJS Ketenagakerjaan (angka)"},
-                "deduction_meal": {"type": "number", "description": "Potongan Uang Makan (angka)"},
-                "deduction_transport": {"type": "number", "description": "Potongan Uang Transport (angka)"},
-                "deduction_insurance": {"type": "number", "description": "Potongan Asuransi Lain (angka)"},
-                "deduction_laptop_installment": {"type": "number", "description": "Potongan Cicilan Laptop (angka)"},
-                "deduction_laptop_remaining_months": {"type": "integer", "description": "Sisa Bulan Cicilan Laptop (angka)"},
-                "deduction_other": {"type": "number", "description": "Potongan Lainnya (angka)"},
-                "deduction_other_description": {"type": "string", "description": "Deskripsi Potongan Lainnya"},
-                "total_monthly_deductions": {"type": "number", "description": "Total Potongan (angka)"},
-                "notes": {"type": "string", "description": "Catatan Tambahan"}
-            },
-            "required": ["emp_id"]
-        }
-    },
-    {
         "name": "get_employee_cv",
         "description": "Ambil data CV/profil LENGKAP karyawan termasuk pendidikan, sertifikasi, keahlian, pengalaman kerja, data pribadi (KTP, NPWP, golongan darah), kontak darurat, info bank, dan rincian potongan bulanan (BPJS, asuransi, cicilan laptop, dll).",
         "parameters": {
@@ -1042,6 +985,12 @@ CV_TOOLS = [
                     "type": "integer",
                     "description": "Database ID karyawan"
                 },
+                "focus": {
+                    "type": "string",
+                    "enum": ["general", "skills", "career", "compensation", "performance"],
+                    "description": "Fokus analisa. Default: general.",
+                    "default": "general"
+                },
                 "question": {
                     "type": "string",
                     "description": "Pertanyaan spesifik tentang CV. Kosongkan untuk rangkuman umum. Contoh: 'Apa sertifikasi yang dimiliki?', 'Berapa lama pengalaman kerja?'"
@@ -1058,7 +1007,7 @@ CV_TOOLS = [
             "misalnya ketika user berkata: 'update karyawan dengan CV terlampir', 'upload CV ini', "
             "'ganti file CV', atau 'lampirkan CV ke profil karyawan'. "
             "action='upload' untuk file baru, action='replace' untuk mengganti file lama, action='delete' untuk menghapus. "
-            "SETELAH tool ini berhasil, lanjutkan dengan extract_cv_from_file untuk mengisi data profil dari CV tersebut."
+            "SETELAH tool ini berhasil, lanjutkan dengan extract_data_from_file untuk mengisi data profil dari CV tersebut."
         ),
         "parameters": {
             "type": "object",
@@ -1083,35 +1032,6 @@ CV_TOOLS = [
                 }
             },
             "required": ["emp_id", "action"]
-        }
-    },
-    {
-        "name": "extract_cv_from_file",
-        "description": (
-            "BACA file CV dan UPDATE/ISI data profil karyawan secara otomatis dari isi CV tersebut. "
-            "Gunakan tool ini saat user meminta: 'update informasi karyawan dari CV', 'perbarui data dari CV terlampir', "
-            "'isi profil berdasarkan CV ini', 'ekstrak data CV', atau setelah manage_cv_file berhasil menyimpan file CV. "
-            "AI akan membaca isi file CV (PDF/DOCX/TXT) dan mengisi kolom profil karyawan di database: "
-            "pendidikan, skill, sertifikasi, pengalaman kerja, data pribadi (KTP, NPWP, golongan darah, agama), "
-            "kontak darurat, dan info bank. Hanya field yang ditemukan di CV yang akan diisi. "
-            "ALUR LENGKAP saat ada CV attachment: (1) manage_cv_file action=upload/replace → (2) extract_cv_from_file."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "emp_id": {
-                    "type": "integer",
-                    "description": "Database ID karyawan"
-                },
-                "file_path": {
-                    "type": "string",
-                    "description": (
-                        "Path file CV yang akan dibaca. Opsional — jika tidak diisi, "
-                        "akan otomatis menggunakan file yang sudah disimpan via manage_cv_file sebelumnya."
-                    )
-                }
-            },
-            "required": ["emp_id"]
         }
     }
 ]

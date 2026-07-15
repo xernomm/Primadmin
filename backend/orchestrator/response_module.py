@@ -4,7 +4,7 @@ Extracted from HRAgent._stage_5_generate_response and _format_fallback_response.
 """
 import json
 import asyncio
-import ollama
+from agent.gemini_client import gemini_chat
 
 from agent.core import RESPONSE_MODEL
 from orchestrator._utils import log_debug
@@ -40,14 +40,14 @@ async def run_response(state, ctx, conversation_id=None):
             conversation_history=recent_history,
         )
 
-        response = await asyncio.to_thread(
-            ollama.chat,
-            model=RESPONSE_MODEL,
+        content = await asyncio.to_thread(
+            gemini_chat,
             messages=messages,
-            options={"temperature": 0.5, "num_predict": 40000000},
+            model=RESPONSE_MODEL,
+            temperature=0.5,
         )
 
-        state.final_response = response.get("message", {}).get("content", "")
+        state.final_response = content
         log_debug("DEBUG: Stage 5 Raw Response", state.final_response)
 
         state.stages_completed.append("response_generation")

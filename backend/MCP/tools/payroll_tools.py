@@ -18,7 +18,7 @@ from email.mime.base import MIMEBase
 from email import encoders
 import cx_Oracle
 from dotenv import load_dotenv
-import ollama
+from agent.gemini_client import gemini_generate
 
 load_dotenv()
 
@@ -38,7 +38,7 @@ SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", SMTP_USER)
 
 # LLM Model for analysis
-ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "qwen3:latest")
+ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "gemini-2.5-flash")
 
 # Directories — import from centralized config
 import sys
@@ -356,13 +356,12 @@ Format output sebagai JSON:
   "recommendations": ["rekomendasi 1", "rekomendasi 2"]
 }}"""
 
-        response = ollama.generate(
+        analysis_text = gemini_generate(
             model=ANALYSIS_MODEL,
             prompt=analysis_prompt,
-            options={"temperature": 0.3}
+            temperature=0.3,
+            response_mime_type="application/json"
         )
-        
-        analysis_text = response.get("response", "")
         
         # Parse JSON from LLM response
         json_match = re.search(r'\{[\s\S]*\}', analysis_text)

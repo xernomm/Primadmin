@@ -66,7 +66,7 @@ def _resolve_and_validate(path_str: str, must_exist: bool = True) -> tuple[Path,
 def read_file(file_path: str, encoding: str = "utf-8") -> Dict[str, Any]:
     """
     Baca isi file teks (txt, md, csv, json, log, html, yaml, dll).
-    File PDF/DOCX tidak bisa dibaca langsung sebagai teks — gunakan extract_cv_from_file untuk itu.
+    File PDF/DOCX tidak bisa dibaca langsung sebagai teks — gunakan extract_data_from_file untuk itu.
 
     Args:
         file_path: Path absolut ke file yang akan dibaca.
@@ -90,7 +90,7 @@ def read_file(file_path: str, encoding: str = "utf-8") -> Dict[str, Any]:
                 "error": (
                     f"Ekstensi '{ext}' tidak didukung untuk pembacaan teks langsung. "
                     f"Ekstensi yang didukung: {', '.join(sorted(READABLE_TEXT_EXTENSIONS))}. "
-                    f"Untuk CV PDF/DOCX gunakan tool extract_cv_from_file."
+                    f"Untuk CV PDF/DOCX gunakan tool extract_data_from_file."
                 )
             }
 
@@ -353,7 +353,7 @@ FILESYSTEM_TOOLS = [
         "name": "read_file",
         "description": (
             "Baca isi file teks (txt, md, csv, json, log, html, yaml). "
-            "TIDAK mendukung PDF/DOCX — gunakan extract_cv_from_file untuk CV. "
+            "TIDAK mendukung PDF/DOCX — gunakan extract_data_from_file untuk CV. "
             "Gunakan ini untuk membaca log, konfigurasi, atau file teks lainnya."
         ),
         "parameters": {
@@ -436,46 +436,5 @@ FILESYSTEM_TOOLS = [
             "required": ["file_path"]
         }
     },
-    {
-        "name": "list_dir",
-        "description": (
-            "List isi sebuah direktori. Gunakan ini untuk melihat file apa saja "
-            "yang tersedia di folder uploads, exports, atau documents."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "directory_path": {
-                    "type": "string",
-                    "description": "Path absolut ke direktori yang ingin dilihat isinya."
-                }
-            },
-            "required": ["directory_path"]
-        }
-    },
-    {
-        "name": "search_files",
-        "description": (
-            "Cari file dengan pola tertentu (glob) di folder yang diizinkan. "
-            "Contoh pattern: '*.pdf' untuk semua PDF, 'CV_*' untuk file berawalan CV."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "directory_path": {
-                    "type": "string",
-                    "description": "Direktori awal pencarian."
-                },
-                "pattern": {
-                    "type": "string",
-                    "description": "Pola nama file (glob). Default: '*'"
-                },
-                "recursive": {
-                    "type": "boolean",
-                    "description": "Cari ke dalam sub-folder. Default: false."
-                }
-            },
-            "required": ["directory_path"]
-        }
-    },
 ]
+

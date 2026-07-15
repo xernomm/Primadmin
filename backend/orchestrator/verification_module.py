@@ -3,7 +3,7 @@ Verification Module — Stage 4: Result Verification.
 Extracted from HRAgent._stage_4_verify_results.
 """
 import asyncio
-import ollama
+from agent.gemini_client import gemini_chat
 
 from agent.core import VERIFICATION_MODEL
 from orchestrator._utils import parse_json_response, log_debug
@@ -43,14 +43,12 @@ async def run_verification(state, ctx):
             retry_count=state.retry_count,
         )
 
-        response = await asyncio.to_thread(
-            ollama.chat,
-            model=VERIFICATION_MODEL,
+        content = await asyncio.to_thread(
+            gemini_chat,
             messages=messages,
-            options={"temperature": 0.2, "num_predict": 50000},
+            model=VERIFICATION_MODEL,
+            temperature=0.2,
         )
-
-        content = response.get("message", {}).get("content", "")
         log_debug("DEBUG: Stage 4 Verification Raw", content)
 
         parsed = parse_json_response(content)

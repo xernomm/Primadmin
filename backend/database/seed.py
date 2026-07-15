@@ -167,9 +167,40 @@ def seed_attendance(conn):
                 
                 rand_val = random.random()
                 if rand_val < 0.90:
-                    status = 'present'
-                    check_in_hour = random.randint(7, 9)
-                    check_in_min = random.randint(0, 59)
+                    # 50% chance of being late, 50% chance of being on time
+                    is_late = random.random() < 0.50
+                    
+                    if is_late:
+                        status = 'late'
+                        # Lateness categories based on attendance_policy.md:
+                        # Ringan (1-15 min): 60% chance
+                        # Sedang (16-30 min): 25% chance
+                        # Berat (> 30 min): 15% chance
+                        late_type = random.random()
+                        if late_type < 0.60:
+                            check_in_hour = 8
+                            check_in_min = random.randint(1, 15)
+                            notes = f"Terlambat Ringan ({check_in_min} menit)"
+                        elif late_type < 0.85:
+                            check_in_hour = 8
+                            check_in_min = random.randint(16, 30)
+                            notes = f"Terlambat Sedang ({check_in_min} menit)"
+                        else:
+                            # 31 to 90 minutes late
+                            late_minutes = random.randint(31, 90)
+                            check_in_hour = 8 + (late_minutes // 60)
+                            check_in_min = late_minutes % 60
+                            notes = f"Terlambat Berat ({late_minutes} menit)"
+                    else:
+                        status = 'present'
+                        # On time check-in (07:00 - 08:00)
+                        check_in_hour = 7
+                        check_in_min = random.randint(0, 59)
+                        if random.random() < 0.1:
+                            check_in_hour = 8
+                            check_in_min = 0
+                        notes = None
+                    
                     check_in = datetime.combine(current_date, datetime.min.time().replace(hour=check_in_hour, minute=check_in_min))
                     
                     check_out_hour = random.randint(17, 19)
@@ -177,7 +208,6 @@ def seed_attendance(conn):
                     check_out = datetime.combine(current_date, datetime.min.time().replace(hour=check_out_hour, minute=check_out_min))
                     
                     work_location = random.choice(work_locations)
-                    notes = None
                 elif rand_val < 0.95:
                     status = 'sick'
                     check_in = None

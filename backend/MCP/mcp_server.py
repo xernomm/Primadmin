@@ -17,6 +17,7 @@ for _p in (_backend_dir, _mcp_dir):
 
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
+from typing import Optional, Any
 
 # Import tool functions from modular tools
 from tools.employee_tools import (
@@ -26,38 +27,25 @@ from tools.employee_tools import (
     create_employee as _create_employee,
     update_employee_by_id as _update_employee_by_id,
     delete_employee_by_id as _delete_employee_by_id,
-    filter_employees_by_position as _filter_employees_by_position,
-    filter_employees_by_status as _filter_employees_by_status,
-    filter_employees_salary_above as _filter_employees_salary_above,
-    filter_employees_salary_below as _filter_employees_salary_below,
     get_employee_files as _get_employee_files
 )
 from tools.attendance_tools import (
-    get_today_attendance as _get_today_attendance,
-    get_today_late_employees as _get_today_late_employees,
-    get_today_remote_employees as _get_today_remote_employees,
-    get_today_onsite_employees as _get_today_onsite_employees,
+    get_attendance as _get_attendance,
     update_absensi as _update_absensi
-)
-from tools.leave_tools import (
-    get_employee_leave_by_id as _get_employee_leave_by_id,
-    get_all_employee_leaves as _get_all_employee_leaves,
-    update_leaves as _update_leaves
 )
 from tools.sql_generator import (
     generate_and_execute_sql as _generate_and_execute_sql,
     get_schema_context as _get_schema_context
 )
 from tools.utility_tools import (
-    get_current_time as _get_current_time
+    get_current_time as _get_current_time,
+    extract_data_from_file as _extract_data_from_file
 )
 from tools.cv_tools import (
     get_employee_cv as _get_employee_cv,
     analyze_employee_cv as _analyze_employee_cv,
     summarize_employee_cv as _summarize_employee_cv,
-    manage_cv_file as _manage_cv_file,
-    extract_cv_from_file as _extract_cv_from_file,
-    update_employee_cv as _update_employee_cv
+    manage_cv_file as _manage_cv_file
 )
 from tools.analysis_tools import (
     analyze_attendance_with_policy as _analyze_attendance_with_policy
@@ -66,7 +54,8 @@ from tools.email_tools import (
     send_warning_letter as _send_warning_letter,
     send_email_to_employee as _send_email_to_employee,
     send_broadcast_email as _send_broadcast_email,
-    reset_sp_level as _reset_sp_level
+    reset_sp_level as _reset_sp_level,
+    generate_email_content as _generate_email_content
 )
 from tools.export_tools import (
     export_employee_personal_data as _export_employee_personal_data,
@@ -99,13 +88,22 @@ mcp = FastMCP("HRAgentMCP")
 # ============================================================================
 
 @mcp.tool()
-def search_employees(query: str, limit: int = 20) -> dict:
+def search_employees(
+    query: Optional[str] = None,
+    position: Optional[str] = None,
+    department: Optional[str] = None,
+    status: Optional[str] = None,
+    min_salary: Optional[float] = None,
+    max_salary: Optional[float] = None,
+    limit: int = 20
+) -> dict:
     """
-    Mencari data karyawan secara fleksibel (Fuzzy Search).
-    Gunakan tool ini jika user memberikan nama, email, atau nomor telepon (parsial atau lengkap).
-    Output mencakup: ID, nama, departemen, posisi, dan kontak dasar.
+    Mencari dan memfilter data karyawan secara fleksibel.
+    Gunakan tool ini jika user memberikan nama, email, nomor telepon (parsial atau lengkap) 
+    atau ingin memfilter berdasarkan jabatan (position), departemen, status kepegawaian, 
+    atau range gaji (min_salary, max_salary).
     """
-    return _search_employees(query, limit)
+    return _search_employees(query, position, department, status, min_salary, max_salary, limit)
 
 
 @mcp.tool()
@@ -116,10 +114,10 @@ def get_employee_by_id(emp_id: int) -> dict:
     Output mencakup: Gaji, data pribadi, tanggal bergabung, status pernikahan, BPJS, dll.
     
     PENTING: Output juga menyertakan:
-    - `CV_FILE_PATH`: path absolut file CV karyawan (gunakan langsung untuk extract_cv_from_file atau manage_cv_file)
+    - `CV_FILE_PATH`: path absolut file CV karyawan (gunakan langsung untuk extract_data_from_file atau manage_cv_file)
     - `cv_info`: data profil CV lengkap (pendidikan, skill, sertifikasi, pengalaman kerja, dll)
     
-    Gunakan `data.CV_FILE_PATH` dari hasil tool ini sebagai file_path di extract_cv_from_file.
+    Gunakan `data.CV_FILE_PATH` dari hasil tool ini sebagai file_path di extract_data_from_file.
     """
     return _get_employee_by_id(emp_id)
 
@@ -145,11 +143,13 @@ def create_employee(name: str) -> dict:
 
 
 @mcp.tool()
-def update_employee_by_id(emp_id: int, updates: dict) -> dict:
+def update_employee_by_id(emp_id: int, updates: Any) -> dict:
     """
-    Memperbarui/Edit data karyawan yang sudah ada.
-    Dukungan field: name, email, phone, department, position, status, salary, address, dll.
-    Pastikan emp_id valid sebelum memanggil ini.
+    Memperbarui/Edit data profil karyawan yang sudah ada di database.
+    Tool ini sangat fleksibel dan secara otomatis memperbarui data personal (tabel employees)
+    maupun data profesional/CV (tabel employee_cv) dalam satu transaksi tunggal.
+    Dukungan field mencakup: name, email, phone, department, position, status, basic_salary,
+    address, remaining_leave, sp_level, skills, education_level, certifications, dll.
     """
     return _update_employee_by_id(emp_id, updates)
 
@@ -165,36 +165,13 @@ def delete_employee_by_id(emp_id: int) -> dict:
 
 
 @mcp.tool()
-def filter_employees_by_position(position: str, limit: int = 50) -> dict:
-    """Filter karyawan berdasarkan jabatan/posisi."""
-    return _filter_employees_by_position(position, limit)
-
-
-@mcp.tool()
-def filter_employees_by_status(status: str, limit: int = 50) -> dict:
-    """Filter karyawan berdasarkan status kepegawaian (tetap, kontrak, magang)."""
-    return _filter_employees_by_status(status, limit)
-
-
-@mcp.tool()
-def filter_employees_salary_above(min_salary: float, limit: int = 50) -> dict:
-    """Filter karyawan dengan gaji di atas threshold."""
-    return _filter_employees_salary_above(min_salary, limit)
-
-
-@mcp.tool()
-def filter_employees_salary_below(max_salary: float, limit: int = 50) -> dict:
-    """Filter karyawan dengan gaji di bawah threshold."""
-    return _filter_employees_salary_below(max_salary, limit)
-
-@mcp.tool()
 def get_employee_files(emp_id: int) -> dict:
     """
     Ambil daftar semua file penting milik satu karyawan:
     file CV (employee_cv.file_path) dan slip gaji (payroll_slips.file_path).
     
     Mengembalikan abs_path dan server_url untuk setiap file.
-    WAJIB dipanggil sebelum extract_cv_from_file agar path file akurat.
+    WAJIB dipanggil sebelum extract_data_from_file agar path file akurat.
     """
     return _get_employee_files(emp_id)
 
@@ -204,37 +181,20 @@ def get_employee_files(emp_id: int) -> dict:
 # ============================================================================
 
 @mcp.tool()
-def get_today_attendance(limit: int = 100) -> dict:
+def get_attendance(
+    date: Optional[str] = None,
+    status: Optional[str] = None,
+    work_location: Optional[str] = None,
+    limit: int = 100
+) -> dict:
     """
-    Melihat log absensi HARI INI (Real-time).
-    Menampilkan siapa saja yang sudah Check-in, Check-out, atau sedang istirahat hari ini.
+    Mengambil data absensi karyawan dengan filter opsional tanggal, status, dan lokasi kerja.
+    Gunakan tool ini jika user menanyakan absensi hari ini, kemarin, keterlambatan, atau WFH/WFO.
+    date: Tanggal absensi dalam format YYYY-MM-DD (opsional, default: hari ini).
+    status: Status kehadiran karyawan, misal 'late', 'ontime' (opsional).
+    work_location: Lokasi kerja karyawan, misal 'Office' (WFO) atau 'Remote' (WFH) (opsional).
     """
-    return _get_today_attendance(limit)
-
-
-@mcp.tool()
-def get_today_late_employees(limit: int = 100) -> dict:
-    """
-    Mencari karyawan yang TERLAMBAT (Late) hari ini.
-    Gunakan untuk monitoring kedisiplinan harian.
-    """
-    return _get_today_late_employees(limit)
-
-
-@mcp.tool()
-def get_today_remote_employees(limit: int = 100) -> dict:
-    """
-    Mencari karyawan yang bekerja REMOTE (WFH) hari ini.
-    """
-    return _get_today_remote_employees(limit)
-
-
-@mcp.tool()
-def get_today_onsite_employees(limit: int = 100) -> dict:
-    """
-    Mencari karyawan yang bekerja di KANTOR (WFO/Onsite) hari ini.
-    """
-    return _get_today_onsite_employees(limit)
+    return _get_attendance(date, status, work_location, limit)
 
 
 
@@ -248,28 +208,6 @@ def update_absensi(absen_id: int, updates: dict) -> dict:
     Memerlukan ID Absensi (bukan ID Karyawan).
     """
     return _update_absensi(absen_id, updates)
-
-
-# ============================================================================
-# LEAVE TOOLS
-# ============================================================================
-
-@mcp.tool()
-def get_employee_leave_by_id(emp_id: int) -> dict:
-    """Mengambil data cuti karyawan berdasarkan ID karyawan."""
-    return _get_employee_leave_by_id(emp_id)
-
-
-@mcp.tool()
-def get_all_employee_leaves(limit: int = 100) -> dict:
-    """Mengambil data cuti semua karyawan untuk monitoring HR."""
-    return _get_all_employee_leaves(limit)
-
-
-@mcp.tool()
-def update_leaves(emp_id: int, updates: dict) -> dict:
-    """Memperbarui data cuti karyawan."""
-    return _update_leaves(emp_id, updates)
 
 
 
@@ -317,26 +255,6 @@ def manage_cv_file(emp_id: int, action: str, file_path: Optional[str] = None) ->
     file_path wajib untuk action upload/replace.
     """
     return _manage_cv_file(emp_id, action, file_path)
-
-
-@mcp.tool()
-def extract_cv_from_file(emp_id: int, file_path: Optional[str] = None) -> dict:
-    """
-    Baca file CV (PDF/DOCX/TXT), ekstrak data menggunakan AI, lalu simpan ke database.
-    Hanya kolom yang ditemukan informasinya di CV yang akan diisi.
-    Jika file_path=None, menggunakan file yang sudah tersimpan di record employee.
-    """
-    return _extract_cv_from_file(emp_id, file_path)
-
-
-@mcp.tool()
-def update_employee_cv(emp_id: int, updates: dict) -> dict:
-    """
-    Memperbarui/Edit data resume/CV karyawan.
-    Dukungan field: education_level, education_institution, education_major, graduation_year, certifications, skills, work_experience, emergency_contact_name, emergency_contact_phone, emergency_contact_relation, blood_type, religion, ktp_number, npwp_number, bank_name, bank_account_number, bank_account_name, deduction_bpjs_kesehatan, dll.
-    Pastikan emp_id valid sebelum memanggil ini.
-    """
-    return _update_employee_cv(emp_id, updates)
 
 
 # ============================================================================
@@ -396,36 +314,57 @@ def generate_and_execute_sql(
 # ============================================================================
 
 @mcp.tool()
-def send_warning_letter(emp_id: int, reason: str, issued_by: int = 1) -> dict:
+def send_warning_letter(
+    emp_id: int, 
+    reason: Optional[str] = "", 
+    issued_by: int = 1,
+    attachments: Optional[Any] = None
+) -> dict:
     """
     Kirim Surat Peringatan (SP) ke karyawan via email dan increment level SP.
     SP1 = Peringatan Pertama, SP2 = Peringatan Kedua, SP3 = Peringatan Ketiga.
     Memerlukan konfirmasi user sebelum eksekusi karena berdampak pada rekam jejak karyawan.
+    
+    attachments: File tunggal atau daftar file (path lokal, URL, atau nama file temp) untuk dilampirkan.
     """
-    return _send_warning_letter(emp_id, reason, issued_by)
+    return _send_warning_letter(emp_id, reason, issued_by, attachments)
 
 
 @mcp.tool()
-def send_email_to_employee(emp_id: int, subject: str, message: str) -> dict:
+def send_email_to_employee(
+    emp_id: int, 
+    subject: Optional[str] = "", 
+    message: Optional[str] = "",
+    attachments: Optional[Any] = None,
+    auto_polish: bool = True
+) -> dict:
     """
-    Kirim email kustom ke satu karyawan tertentu.
+    Kirim email kustom ke satu karyawan tertentu dengan opsi pemolesan profesional otomatis dan lampiran file.
     Gunakan untuk komunikasi personal: pengumuman, reminder, atau informasi khusus.
+    
+    attachments: File tunggal atau list file (path lokal, URL server, atau nama file temp) untuk dilampirkan.
+    auto_polish: Jika True (default), pesan kasual akan dipoles secara otomatis menggunakan AI agar terdengar sangat profesional dalam bahasa Indonesia.
     """
-    return _send_email_to_employee(emp_id, subject, message)
+    return _send_email_to_employee(emp_id, subject, message, attachments, auto_polish)
 
 
 @mcp.tool()
 def send_broadcast_email(
-    subject: str,
-    message: str,
-    department: str = None
+    subject: Optional[str] = "",
+    message: Optional[str] = "",
+    department: Optional[str] = None,
+    attachments: Optional[Any] = None,
+    auto_polish: bool = True
 ) -> dict:
     """
-    Kirim email broadcast ke semua karyawan aktif.
+    Kirim email broadcast ke semua karyawan aktif dengan opsi pemolesan profesional otomatis dan lampiran file.
     Jika department diisi, hanya dikirim ke karyawan departemen tersebut.
     Gunakan untuk pengumuman perusahaan, kebijakan baru, atau informasi massal.
+    
+    attachments: File tunggal atau list file (path lokal, URL server, atau nama file temp) untuk dilampirkan.
+    auto_polish: Jika True (default), pesan kasual akan dipoles secara otomatis menggunakan AI agar terdengar sangat profesional dalam bahasa Indonesia.
     """
-    return _send_broadcast_email(subject, message, department)
+    return _send_broadcast_email(subject, message, department, attachments, auto_polish)
 
 
 @mcp.tool()
@@ -436,6 +375,15 @@ def reset_sp_level(emp_id: int, reason: str = "Pemutihan SP") -> dict:
     Memerlukan konfirmasi user karena mengubah rekam jejak karyawan.
     """
     return _reset_sp_level(emp_id, reason)
+
+
+@mcp.tool()
+def generate_email_content(recipient_name: Optional[str] = "", context: Optional[str] = "") -> dict:
+    """
+    Gunakan LLM untuk menyusun konten email (subjek & pesan) agar lebih profesional, padat, dan jelas berdasarkan konteks yang diberikan.
+    Hasil dari tool ini bisa di-pass ke `send_email_to_employee` atau `send_broadcast_email`.
+    """
+    return _generate_email_content(recipient_name, context)
 
 
 # ============================================================================
@@ -474,7 +422,7 @@ def export_employee_operational_data(
 def read_file(file_path: str, encoding: str = "utf-8") -> dict:
     """
     Baca isi file teks (txt, md, csv, json, log, html, yaml).
-    File PDF/DOCX tidak bisa dibaca langsung — gunakan extract_cv_from_file untuk itu.
+    File PDF/DOCX tidak bisa dibaca langsung — gunakan extract_data_from_file untuk itu.
     """
     return _read_file(file_path, encoding)
 
@@ -610,6 +558,19 @@ def send_payroll_email(
 def get_current_time() -> dict:
     """Mengambil waktu dan tanggal saat ini."""
     return _get_current_time()
+
+
+@mcp.tool()
+def extract_data_from_file(file_path: str, instruction: str) -> dict:
+    """
+    Ekstrak data secara fleksibel dan universal dari dokumen (PDF, DOCX, TXT)
+    menggunakan AI berdasarkan instruksi/kebutuhan spesifik yang diberikan.
+    Gunakan tool ini untuk mengekstrak informasi apa pun dari file yang diunggah.
+    
+    file_path: Path absolut file dokumen atau URL server.
+    instruction: Petunjuk/kriteria data apa saja yang ingin diekstrak (contoh: "ekstrak CV lengkap", "ambil no KTP dan NPWP").
+    """
+    return _extract_data_from_file(file_path, instruction)
 
 
 # ============================================================================

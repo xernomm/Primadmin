@@ -6,7 +6,7 @@ Uses Oracle Database with cx_Oracle.
 import os
 import cx_Oracle
 import traceback
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 
@@ -28,28 +28,62 @@ def _get_connection():
     return cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
 
 
-def get_today_attendance(limit: int = 100) -> Dict[str, Any]:
+def get_attendance(
+    date: Optional[str] = None,
+    status: Optional[str] = None,
+    work_location: Optional[str] = None,
+    limit: int = 100
+) -> Dict[str, Any]:
     """
-    Get today's attendance records.
+    Mengambil data absensi karyawan dengan filter opsional tanggal, status, dan lokasi kerja.
     
     Args:
-        limit: Maximum number of rows (default: 100)
+        date: Tanggal absensi dalam format YYYY-MM-DD (opsional, default: hari ini)
+        status: Status kehadiran karyawan, misal 'late', 'ontime' (opsional)
+        work_location: Lokasi kerja, misal 'Office', 'Remote' (opsional)
+        limit: Jumlah maksimal baris hasil (default: 100)
         
     Returns:
-        Dict with attendance data
+        Dict berisi kolom dan data absensi
     """
     try:
         with engine.begin() as conn:
-            result = conn.execute(text("""
-                SELECT a.id, e.name, a.work_location, a.check_in as timestamp, a.status, a.notes
+            sql = """
+                SELECT a.id, e.name, a.attendance_date, a.work_location, a.check_in as timestamp, a.status, a.notes
                 FROM attendance a
                 JOIN employees e ON a.employee_id = e.id
-                WHERE TRUNC(a.attendance_date) = TRUNC(SYSDATE)
-                ORDER BY a.check_in ASC
-                FETCH FIRST :limit ROWS ONLY
-            """), {"limit": limit}).fetchall()
+                WHERE 1=1
+            """
+            params = {}
             
-            data = [dict(row._mapping) for row in result]
+            if date:
+                sql += " AND TRUNC(a.attendance_date) = TO_DATE(:attendance_date, 'YYYY-MM-DD')"
+                params["attendance_date"] = date
+            else:
+                sql += " AND TRUNC(a.attendance_date) = TRUNC(SYSDATE)"
+                
+            if status:
+                sql += " AND LOWER(a.status) = :status"
+                params["status"] = status.lower()
+                
+            if work_location:
+                sql += " AND LOWER(a.work_location) = :work_location"
+                params["work_location"] = work_location.lower()
+                
+            sql += " ORDER BY a.check_in ASC FETCH FIRST :limit ROWS ONLY"
+            params["limit"] = limit
+            
+            result = conn.execute(text(sql), params).fetchall()
+            
+            data = []
+            for row in result:
+                row_dict = dict(row._mapping)
+                if row_dict.get("attendance_date") and hasattr(row_dict["attendance_date"], "strftime"):
+                    row_dict["attendance_date"] = row_dict["attendance_date"].strftime("%Y-%m-%d")
+                if row_dict.get("timestamp") and hasattr(row_dict["timestamp"], "strftime"):
+                    row_dict["timestamp"] = row_dict["timestamp"].strftime("%Y-%m-%d %H:%M:%S")
+                data.append(row_dict)
+                
             columns = list(data[0].keys()) if data else []
             
             return {
@@ -60,93 +94,26 @@ def get_today_attendance(limit: int = 100) -> Dict[str, Any]:
             }
     except Exception as e:
         return {"success": False, "error": str(e), "trace": traceback.format_exc()}
+
+
+def get_today_attendance(limit: int = 100) -> Dict[str, Any]:
+    """Legacy wrapper for backward compatibility."""
+    return get_attendance(limit=limit)
 
 
 def get_today_late_employees(limit: int = 100) -> Dict[str, Any]:
-    """
-    List employees who were late today (check-in after 08:30).
-    """
-    try:
-        with engine.begin() as conn:
-            result = conn.execute(text("""
-                SELECT e.name, a.check_in as timestamp, a.work_location, a.status
-                FROM attendance a
-                JOIN employees e ON a.employee_id = e.id
-                WHERE TRUNC(a.attendance_date) = TRUNC(SYSDATE)
-                AND (a.status = 'late' OR (TO_CHAR(a.check_in, 'HH24:MI') > '08:30'))
-                ORDER BY a.check_in ASC
-                FETCH FIRST :limit ROWS ONLY
-            """), {"limit": limit}).fetchall()
-            
-            data = [dict(row._mapping) for row in result]
-            columns = list(data[0].keys()) if data else []
-            
-            return {
-                "success": True,
-                "columns": list(columns),
-                "data": data,
-                "count": len(data)
-            }
-    except Exception as e:
-        return {"success": False, "error": str(e), "trace": traceback.format_exc()}
+    """Legacy wrapper for backward compatibility."""
+    return get_attendance(status='late', limit=limit)
 
 
 def get_today_remote_employees(limit: int = 100) -> Dict[str, Any]:
-    """
-    Get employees working remotely today.
-    """
-    try:
-        with engine.begin() as conn:
-            result = conn.execute(text("""
-                SELECT e.name, a.check_in as timestamp, a.work_location, a.status
-                FROM attendance a
-                JOIN employees e ON a.employee_id = e.id
-                WHERE TRUNC(a.attendance_date) = TRUNC(SYSDATE)
-                AND a.work_location = 'Remote'
-                ORDER BY a.check_in ASC
-                FETCH FIRST :limit ROWS ONLY
-            """), {"limit": limit}).fetchall()
-            
-            data = [dict(row._mapping) for row in result]
-            columns = list(data[0].keys()) if data else []
-            
-            return {
-                "success": True,
-                "columns": list(columns),
-                "data": data,
-                "count": len(data)
-            }
-    except Exception as e:
-        return {"success": False, "error": str(e), "trace": traceback.format_exc()}
+    """Legacy wrapper for backward compatibility."""
+    return get_attendance(work_location='remote', limit=limit)
 
 
 def get_today_onsite_employees(limit: int = 100) -> Dict[str, Any]:
-    """
-    Get employees working onsite today.
-    """
-    try:
-        with engine.begin() as conn:
-            result = conn.execute(text("""
-                SELECT e.name, a.check_in as timestamp, a.work_location, a.status
-                FROM attendance a
-                JOIN employees e ON a.employee_id = e.id
-                WHERE TRUNC(a.attendance_date) = TRUNC(SYSDATE)
-                AND a.work_location = 'Office'
-                ORDER BY a.check_in ASC
-                FETCH FIRST :limit ROWS ONLY
-            """), {"limit": limit}).fetchall()
-            
-            data = [dict(row._mapping) for row in result]
-            columns = list(data[0].keys()) if data else []
-            
-            return {
-                "success": True,
-                "columns": list(columns),
-                "data": data,
-                "count": len(data)
-            }
-    except Exception as e:
-        return {"success": False, "error": str(e), "trace": traceback.format_exc()}
+    """Legacy wrapper for backward compatibility."""
+    return get_attendance(work_location='office', limit=limit)
 
 
 def update_absensi(absen_id: int, updates: Dict[str, Any]) -> Dict[str, Any]:
@@ -170,9 +137,6 @@ def update_absensi(absen_id: int, updates: Dict[str, Any]) -> Dict[str, Any]:
                 WHERE table_name = 'ATTENDANCE'
             """))
             valid_columns = [col[0].lower() for col in columns_result]
-            
-            # Additional allowed fields mapping to schema if needed
-            # But strictly, we should use DB columns from db.py
             
             # Filter valid updates
             clean_updates = {
@@ -205,56 +169,23 @@ def update_absensi(absen_id: int, updates: Dict[str, Any]) -> Dict[str, Any]:
 # Tool definitions for agent
 ATTENDANCE_TOOLS = [
     {
-        "name": "get_today_attendance",
-        "description": "Melihat log absensi HARI INI (Real-time). Menampilkan siapa saja yang sudah Check-in, Check-out, atau sedang istirahat hari ini.",
+        "name": "get_attendance",
+        "description": "Mengambil log absensi karyawan secara fleksibel. Bisa difilter berdasarkan tanggal tertentu (date), status kehadiran (status: 'late', 'ontime', dll), maupun lokasi kerja (work_location: 'Office', 'Remote'). Berguna untuk monitoring absensi harian, keterlambatan, atau karyawan WFH/WFO.",
         "parameters": {
             "type": "object",
             "properties": {
-                "limit": {
-                    "type": "integer",
-                    "description": "Jumlah maksimal hasil (default: 100)",
-                    "default": 100
-                }
-            },
-            "required": []
-        }
-    },
-    {
-        "name": "get_today_late_employees",
-        "description": "Mencari karyawan yang TERLAMBAT (Late) hari ini. Gunakan untuk monitoring kedisiplinan harian.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "limit": {
-                    "type": "integer",
-                    "description": "Jumlah maksimal hasil (default: 100)",
-                    "default": 100
-                }
-            },
-            "required": []
-        }
-    },
-    {
-        "name": "get_today_remote_employees",
-        "description": "Mengambil daftar karyawan yang bekerja remote hari ini.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "limit": {
-                    "type": "integer",
-                    "description": "Jumlah maksimal hasil (default: 100)",
-                    "default": 100
-                }
-            },
-            "required": []
-        }
-    },
-    {
-        "name": "get_today_onsite_employees",
-        "description": "Mengambil daftar karyawan yang bekerja onsite di kantor hari ini.",
-        "parameters": {
-            "type": "object",
-            "properties": {
+                "date": {
+                    "type": "string",
+                    "description": "Tanggal absensi format YYYY-MM-DD (opsional, default: hari ini)"
+                },
+                "status": {
+                    "type": "string",
+                    "description": "Status kehadiran: 'late' (terlambat), 'ontime' (tepat waktu) (opsional)"
+                },
+                "work_location": {
+                    "type": "string",
+                    "description": "Lokasi kerja: 'Office' (WFO), 'Remote' (WFH) (opsional)"
+                },
                 "limit": {
                     "type": "integer",
                     "description": "Jumlah maksimal hasil (default: 100)",

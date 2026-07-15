@@ -3,7 +3,7 @@ Escalation Module — Stage 1: Analyze and expand user query.
 Extracted from HRAgent._stage_1_escalate_prompt.
 """
 import asyncio
-import ollama
+from agent.gemini_client import gemini_chat
 
 from agent.core import ESCALATION_MODEL
 from orchestrator._utils import parse_json_response, log_debug
@@ -32,14 +32,12 @@ async def run_escalation(state, ctx, conversation_id=None):
             conversation_history=recent_history,
         )
 
-        response = await asyncio.to_thread(
-            ollama.chat,
-            model=ESCALATION_MODEL,
+        content = await asyncio.to_thread(
+            gemini_chat,
             messages=messages,
-            options={"temperature": 0.3, "num_predict": 50000},
+            model=ESCALATION_MODEL,
+            temperature=0.3,
         )
-
-        content = response.get("message", {}).get("content", "")
         log_debug("DEBUG: Stage 1 Raw Response", content)
 
         parsed = parse_json_response(content)

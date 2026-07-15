@@ -106,28 +106,28 @@ Query Detail: {expanded_query}
 4. **Verifikasi write**: Setelah update/create, ambil data terbaru untuk konfirmasi
 5. **Export**: Untuk request export/download/CSV → `export_employee_personal_data` atau `export_employee_operational_data`
 6. **CV read**: Untuk profil/keahlian/pengalaman/sertifikasi → `get_employee_cv` atau `summarize_employee_cv`
-7. **CV upload**: Jika ada `attachment_file_path` → `manage_cv_file` lalu `extract_cv_from_file`
-8. **CEK vs AKSI**: Jangan kirim email/SP jika user hanya bertanya status
+7. **File upload**: Jika ada file yang diunggah (`attachment_file_path`) → `extract_data_from_file` dengan instruksi yang sesuai.
+8. **CEK vs AKSI (Bedakan tool untuk MENGECEK)**: Jangan kirim email/SP jika user hanya bertanya status. Bedakan tool untuk MENGECEK (read/SELECT) vs melakukan tindakan (write/send/update/delete).
 9. **LARANGAN CHAIN analyze→update**: `analyze_employee_cv` dan `summarize_employee_cv` hanya menghasilkan TEKS NARATIF — outputnya TIDAK BOLEH digunakan sebagai `updates` untuk `update_employee_by_id`. Jika user ingin update data CV, field dan nilainya HARUS diambil langsung dari query user (via entities), bukan dari hasil analisis. Jangan buat step `update_employee_by_id` dengan `updates: {{{{step_N.result.anything}}}}` jika step N adalah analyze/summarize.
 10. **SQL SCHEMA WAJIB**: Jika plan menggunakan `generate_and_execute_sql`, WAJIB tambahkan step `get_schema_context` SEBELUMNYA dan jadikan sebagai `depends_on`. Argumen `schema_context` di `generate_and_execute_sql` harus diisi dengan `{{{{step_N.result.schema}}}}` dari step `get_schema_context`. Ini memastikan SQL generator mengetahui nama tabel dan kolom yang tepat. Contoh:
     ```
     {{"step": N, "name": "get_schema_context", "args": {{}}, "reason": "ambil schema DB untuk SQL generator", "depends_on": null}}
     {{"step": N+1, "name": "generate_and_execute_sql", "args": {{"natural_query": "...", "schema_context": "{{{{step_N.result.schema}}}}"}}, "depends_on": N}}
     ```
-11. **CV FILE WORKFLOW WAJIB**: Untuk operasi yang melibatkan file CV karyawan (`extract_cv_from_file`), ikuti pola berikut:
+11. **CV FILE WORKFLOW WAJIB**: Untuk operasi yang melibatkan file CV karyawan (`extract_data_from_file`), ikuti pola berikut:
     ```
     Step A: search_employees → dapat emp_id
     Step B: get_employee_files(emp_id=step_A.result.id) → dapat abs_path file CV
-    Step C: extract_cv_from_file(emp_id=step_A.result.id, file_path=step_B.result.files.cv.abs_path) → mengembalikan field 'data'
-    Step D: update_employee_cv(emp_id=step_A.result.id, updates={{step_C.result.data}})
+    Step C: extract_data_from_file(file_path=step_B.result.files.cv.abs_path, instruction="ekstrak CV lengkap") → mengembalikan field JSON data pelamar
+    Step D: update_employee_by_id(emp_id=step_A.result.id, updates={{step_C.result}})
     ```
-    (Gunakan `update_employee_cv` khusus untuk field CV, atau `update_employee_by_id` jika melibatkan field general).
+    (Gunakan `update_employee_by_id` untuk mengupdate semua field karyawan, baik field personal maupun data CV/profesional karena tool ini otomatis memperbarui kedua tabel).
     JANGAN hardcode path file. JANGAN gunakan list_directory. SELALU gunakan abs_path dari get_employee_files.
 12. **manage_cv_file ARGS**: Jika menggunakan `manage_cv_file`, WAJIB sertakan `emp_id` (integer) dan `action` (upload/replace/delete). Parameter `file_path` wajib hanya untuk action upload/replace.
 13. **LANGCHAIN COMPATIBILITY**: Selalu gunakan key `name` (untuk nama tool) dan `args` (untuk argument tool). Ini penting agar response mudah dipahami oleh LangChain MCP adapter.
 13. **SCOPE TOOLS — LARANGAN KRITIS**: 
     - Plan HANYA boleh menggunakan tools yang ada dalam daftar tool yang tersedia.
-    - DILARANG mereferensikan tool yang tidak ada dalam daftar (contoh: search_payroll, get_leaves_history, dll).
+    - DILARANG mereferensikan tool yang tidak ada dalam daftar (contoh: search_payroll, get_leaves_history, dll). JUGA DILARANG mengarang nama tabel database (contoh: 'leaves', 'cuti', 'leave_requests').
     - `completion_checklist` HANYA boleh berisi kondisi yang BISA diverifikasi dari output tools dalam plan ini.
     - DILARANG membuat checklist item yang memerlukan data yang tidak diambil oleh tools manapun dalam plan.
 
@@ -154,15 +154,15 @@ Kamu WAJIB mengembalikan JSON murni dengan struktur berikut. Perhatikan bahwa ke
     }},
     {{
       "step": 3,
-      "name": "extract_cv_from_file",
-      "args": {{"emp_id": "{{{{step_1.result.id}}}}", "file_path": "{{{{step_2.result.files.cv.abs_path}}}}"}},
-      "reason": "ekstrak file cv",
+      "name": "extract_data_from_file",
+      "args": {{"file_path": "{{{{step_2.result.files.cv.abs_path}}}}", "instruction": "ekstrak CV lengkap"}},
+      "reason": "ekstrak file cv menggunakan AI",
       "depends_on": 2
     }},
     {{
       "step": 4,
-      "name": "update_employee_cv",
-      "args": {{"emp_id": "{{{{step_1.result.id}}}}", "updates": "{{{{step_3.result.data}}}}"}},
+      "name": "update_employee_by_id",
+      "args": {{"emp_id": "{{{{step_1.result.id}}}}", "updates": "{{{{step_3.result}}}}"}},
       "reason": "simpan data hasil ekstrasi ke database karyawan",
       "depends_on": 3
     }}
@@ -204,7 +204,7 @@ Lakukan analisis secara utuh terhadap hasil yang didapat dibandingkan dengan per
 ### ⚠️ ATURAN PENTING — JANGAN ABAIKAN:
 
 **A. Percayai \`updated_fields\` sebagai bukti nyata DB:**
-- Jika tool update (update_employee_by_id, update_leaves, dll) mengembalikan `"success": true` DAN `"updated_fields": {{...}}`, nilai di `updated_fields` adalah nilai AKTUAL yang tersimpan di database.
+- Jika tool update (update_employee_by_id, update_absensi, dll) mengembalikan `"success": true` DAN `"updated_fields": {{...}}`, nilai di `updated_fields` adalah nilai AKTUAL yang tersimpan di database.
 - JANGAN hitung ulang atau ragukan nilai tersebut. `updated_fields` adalah sumber kebenaran (source of truth).
 
 **B. Percayai \`success: true\` untuk operasi tulis:**
@@ -271,20 +271,50 @@ SYSTEM_PROMPT = """Kamu adalah HR Agent, asisten AI yang membantu tim HR dalam m
 1. **Manajemen Karyawan**
    - Mencari dan menampilkan data karyawan
    - Membuat, update, dan hapus data karyawan
-   - Filter berdasarkan posisi, status, gaji
+   - Filter berdasarkan nama, posisi, status, departemen, dan gaji via `search_employees`
    
 2. **Absensi & Kehadiran**
-   - Cek kehadiran karyawan hari ini
-   - Lihat siapa yang telat, remote, atau onsite
-   - Update data absensi
+   - Cek kehadiran karyawan via `get_attendance` (mendukung filter tanggal, status terlambat/ontime, dan lokasi WFH/WFO)
+   - Update data absensi via `update_absensi`
    
 3. **Cuti Karyawan**
-   - Lihat sisa cuti per karyawan
-   - Update data cuti
+   - Lihat sisa cuti per karyawan (data ada di kolom `remaining_leave` tabel `employees`, BUKAN di tabel terpisah)
+   - Update sisa cuti via tool `update_employee_by_id` (mengupdate field `remaining_leave`)
+   - TIDAK ADA tabel 'leaves' di database — semua data cuti ada di tabel employees
    
 4. **SQL Generator**
    - Untuk query kompleks yang tidak bisa dijawab tools lain
    - Mendukung SELECT, INSERT, UPDATE, DELETE
+
+5. **Penggajian / Payroll**
+   - Ambil detail slip gaji via `get_payroll_detail` dan `get_payroll_info`
+   - Buat slip gaji PDF via `create_payroll_report_pdf`
+   - Kirim email slip gaji via `send_payroll_email`
+   - Analisa anomali penggajian via `analyze_payroll_anomaly`
+   - Ekspor laporan payroll via `export_payroll_csv`
+   - Ambil file slip gaji via `get_payroll_file`
+
+6. **Manajemen CV & Dokumen AI**
+   - Ambil CV/profil lengkap via `get_employee_cv`
+   - Kelola file CV via `manage_cv_file` (upload, replace, delete)
+   - Analisa/rangkum CV via `analyze_employee_cv` atau `summarize_employee_cv`
+   - Ekstrak data universal dari dokumen (PDF/DOCX/TXT) via `extract_data_from_file`
+
+7. **Surat Peringatan & Email**
+   - Kirim surat peringatan (SP) dan naikkan level SP via `send_warning_letter`
+   - Reset level SP via `reset_sp_level`
+   - Kirim email ke satu karyawan via `send_email_to_employee` atau broadcast via `send_broadcast_email`
+   - Buat draf email profesional via `generate_email_content`
+
+8. **Ekspor Data & Analisis**
+   - Ekspor data pribadi via `export_employee_personal_data` atau data operasional via `export_employee_operational_data`
+   - Analisa absensi berdasarkan kebijakan via `analyze_attendance_with_policy`
+
+9. **Manajemen File Safe Sandbox**
+   - Membaca file teks via `read_file`
+   - Menulis/membuat catatan via `write_file`
+   - Ganti nama file via `rename_file`
+   - Hapus file via `delete_file`
 
 ## Panduan Respons:
 
@@ -307,7 +337,7 @@ Untuk permintaan yang kompleks, JANGAN RAGU menggunakan beberapa tools secara be
 - Untuk pertanyaan "Cek status", "Lihat data", "Siapa saja": Gunakan Read Tools (get_*, search_*, sql SELECT).
 - HANYA gunakan Write Tools (send_*, update_*, sql UPDATE) jika user secara eksplisit meminta perubahan atau pengiriman.
 
-**Contoh**: "Siapa yang telat hari ini?" -> `get_current_time` -> `get_today_late_employees` -> Jawab.
+**Contoh**: "Siapa yang telat hari ini?" -> `get_current_time` -> `get_attendance(status='late')` -> Jawab.
 
 
 ## Tools yang Tersedia:
@@ -333,7 +363,6 @@ def get_tool_definitions() -> List[Dict]:
         from MCP.tools import (
             EMPLOYEE_TOOLS,
             ATTENDANCE_TOOLS,
-            LEAVE_TOOLS,
             SQL_TOOLS,
             UTILITY_TOOLS,
             EMAIL_TOOLS,
@@ -347,7 +376,6 @@ def get_tool_definitions() -> List[Dict]:
         # Fallback for different import paths
         from MCP.tools.employee_tools import EMPLOYEE_TOOLS
         from MCP.tools.attendance_tools import ATTENDANCE_TOOLS
-        from MCP.tools.leave_tools import LEAVE_TOOLS
         from MCP.tools.sql_generator import SQL_TOOLS
         from MCP.tools.utility_tools import UTILITY_TOOLS
         from MCP.tools.email_tools import EMAIL_TOOLS
@@ -360,7 +388,6 @@ def get_tool_definitions() -> List[Dict]:
     all_tools = []
     all_tools.extend(EMPLOYEE_TOOLS)
     all_tools.extend(ATTENDANCE_TOOLS)
-    all_tools.extend(LEAVE_TOOLS)
     all_tools.extend(SQL_TOOLS)
     all_tools.extend(UTILITY_TOOLS)
     all_tools.extend(EMAIL_TOOLS)

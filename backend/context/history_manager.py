@@ -7,6 +7,7 @@ import json
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
+# pyrefly: ignore [missing-import]
 import cx_Oracle
 
 

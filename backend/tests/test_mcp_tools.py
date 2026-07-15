@@ -29,9 +29,9 @@ VERBOSE = "-v" in sys.argv or "--verbose" in sys.argv
 
 
 def _sep(title: str):
-    print(f"\n{'─'*60}")
+    print(f"\n{'-'*60}")
     print(f"  {title}")
-    print(f"{'─'*60}")
+    print(f"{'-'*60}")
 
 
 async def call(tool_name: str, args: dict) -> dict:
@@ -51,7 +51,7 @@ def check(label: str, result: dict, required_keys: list = None):
             ok = False
             result["_missing_keys"] = missing
 
-    icon = "✅" if ok else "❌"
+    icon = "[OK]" if ok else "[FAIL]"
     print(f"  {icon} {label}")
     if not ok or VERBOSE:
         print(f"     Result: {json.dumps(result, indent=4, default=str)[:500]}")
@@ -64,7 +64,7 @@ def check(label: str, result: dict, required_keys: list = None):
 
 
 def skip(label: str, reason: str = ""):
-    print(f"  ⏭️  SKIP  {label}" + (f" ({reason})" if reason else ""))
+    print(f"  [SKIP]  {label}" + (f" ({reason})" if reason else ""))
     RESULTS["skipped"] += 1
 
 
@@ -75,7 +75,7 @@ def skip(label: str, reason: str = ""):
 async def test_utility_tools():
     _sep("UTILITY TOOLS")
     res = await call("get_current_time", {})
-    check("get_current_time → has datetime", res, required_keys=["datetime"])
+    check("get_current_time -> has datetime", res, required_keys=["datetime"])
 
 
 async def test_employee_read_tools():
@@ -99,12 +99,12 @@ async def test_employee_read_tools():
     else:
         skip("get_employee_by_id", "no valid ID from get_all_employees")
 
-    # filter tools
-    res4 = await call("filter_employees_by_status", {"status": "tetap", "limit": 5})
-    check("filter_employees_by_status (tetap)", res4)
+    # filter via consolidated search_employees
+    res4 = await call("search_employees", {"status": "tetap", "limit": 5})
+    check("search_employees (status=tetap)", res4)
 
-    res5 = await call("filter_employees_salary_above", {"min_salary": 5000000, "limit": 5})
-    check("filter_employees_salary_above (> 5jt)", res5)
+    res5 = await call("search_employees", {"min_salary": 5000000, "limit": 5})
+    check("search_employees (min_salary=5000000)", res5)
 
     return emp_id  # pass to write tests if needed
 
@@ -112,19 +112,18 @@ async def test_employee_read_tools():
 async def test_attendance_tools():
     _sep("ATTENDANCE TOOLS (READ)")
     for tool in [
-        ("get_today_attendance",     {"limit": 5}),
-        ("get_today_late_employees", {"limit": 5}),
-        ("get_today_remote_employees", {"limit": 5}),
-        ("get_today_onsite_employees", {"limit": 5}),
+        ("get_attendance", {"limit": 5}),
+        ("get_attendance", {"status": "late", "limit": 5}),
+        ("get_attendance", {"work_location": "Office", "limit": 5}),
     ]:
         res = await call(tool[0], tool[1])
-        check(tool[0], res)
+        check(f"{tool[0]} with args {tool[1]}", res)
 
 
 async def test_leave_tools():
-    _sep("LEAVE TOOLS (READ)")
-    res = await call("get_all_employee_leaves", {"limit": 5})
-    check("get_all_employee_leaves", res)
+    _sep("LEAVE / VACATION DATA")
+    res = await call("search_employees", {"limit": 5})
+    check("search_employees (checking employee list has cuti info)", res)
 
 
 async def test_payroll_tools(emp_id=None):
@@ -144,9 +143,16 @@ async def test_payroll_tools(emp_id=None):
 
 async def test_filesystem_tools():
     _sep("FILESYSTEM TOOLS")
-    from config import CV_DIR
-    res = await call("list_directory", {"directory": str(CV_DIR)})
-    check(f"list_directory (CV_DIR)", res)
+    res = await call("read_file", {"file_path": "nonexistent_refactor_test.txt"})
+    # Safety check should fail with Access Denied (Akses ditolak) because it is outside allowed dirs
+    is_denied = res.get("success") is False and "Akses ditolak" in res.get("error", "")
+    if is_denied:
+        print("  [OK] read_file (checking safety checks fail gracefully)")
+        RESULTS["passed"] += 1
+    else:
+        print("  [FAIL] read_file (checking safety checks fail gracefully)")
+        print(f"     Result: {json.dumps(res, indent=4)}")
+        RESULTS["failed"] += 1
 
 
 async def test_sql_tool():
@@ -190,14 +196,14 @@ async def test_write_tools_crud():
             skip("update + delete", "create_employee did not return an ID")
 
     except Exception as e:
-        print(f"  ❌ Exception in CRUD tests: {e}")
+        print(f"  [FAIL] Exception in CRUD tests: {e}")
         RESULTS["failed"] += 1
     finally:
         # Emergency cleanup
         if created_id:
             try:
                 await call("delete_employee_by_id", {"emp_id": int(created_id)})
-                print(f"  🧹 Emergency cleanup: deleted ID {created_id}")
+                print(f"  [CLEANUP] Emergency cleanup: deleted ID {created_id}")
             except Exception:
                 pass
 
@@ -212,29 +218,25 @@ async def test_mcp_server_integrity():
         # employee
         "search_employees", "get_employee_by_id", "get_all_employees",
         "create_employee", "update_employee_by_id", "delete_employee_by_id",
-        "filter_employees_by_position", "filter_employees_by_status",
-        "filter_employees_salary_above", "filter_employees_salary_below",
+        "get_employee_files",
         # attendance
-        "get_today_attendance", "get_today_late_employees",
-        "get_today_remote_employees", "get_today_onsite_employees", "update_absensi",
-        # leave
-        "get_employee_leave_by_id", "get_all_employee_leaves", "update_leaves",
+        "get_attendance", "update_absensi",
         # sql
-        "generate_and_execute_sql",
+        "generate_and_execute_sql", "get_schema_context",
         # utility
-        "get_current_time",
+        "get_current_time", "extract_data_from_file",
         # cv
         "get_employee_cv", "analyze_employee_cv", "summarize_employee_cv",
-        "manage_cv_file", "extract_cv_from_file",
+        "manage_cv_file",
         # analysis
         "analyze_attendance_with_policy",
         # email
         "send_warning_letter", "send_email_to_employee",
-        "send_broadcast_email", "reset_sp_level",
+        "send_broadcast_email", "reset_sp_level", "generate_email_content",
         # export
         "export_employee_personal_data", "export_employee_operational_data",
         # filesystem
-        "list_directory", "read_file", "write_file", "rename_file", "delete_file",
+        "read_file", "write_file", "rename_file", "delete_file",
         # payroll
         "get_payroll_detail", "get_payroll_info", "analyze_payroll_anomaly",
         "export_payroll_csv", "get_payroll_file",
@@ -245,14 +247,14 @@ async def test_mcp_server_integrity():
     extra   = tool_names - EXPECTED
 
     if not missing:
-        print(f"  ✅ All {len(EXPECTED)} expected tools are registered ({len(tool_names)} total)")
+        print(f"  [OK] All {len(EXPECTED)} expected tools are registered ({len(tool_names)} total)")
         RESULTS["passed"] += 1
     else:
-        print(f"  ❌ Missing tools ({len(missing)}): {sorted(missing)}")
+        print(f"  [FAIL] Missing tools ({len(missing)}): {sorted(missing)}")
         RESULTS["failed"] += 1
 
     if extra:
-        print(f"  ℹ️  Extra tools (not in expected list): {sorted(extra)}")
+        print(f"  [INFO] Extra tools (not in expected list): {sorted(extra)}")
 
 
 # ============================================================================

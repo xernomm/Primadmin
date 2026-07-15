@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 import cx_Oracle
 from dotenv import load_dotenv
-import ollama
+from agent.gemini_client import gemini_generate
 
 # Import RAG retriever
 from rag.retriever import get_rag_context, search_documents
@@ -25,7 +25,7 @@ ORACLE_SERVICE = os.getenv("ORACLE_SERVICE_NAME")
 dsn = cx_Oracle.makedsn(ORACLE_HOST, ORACLE_PORT, service_name=ORACLE_SERVICE)
 
 # LLM Model for analysis
-ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "qwen3:latest")
+ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "gemini-2.5-flash")
 
 
 def _get_connection():
@@ -195,13 +195,12 @@ Format output sebagai JSON:
 }}"""
 
         # Call LLM for analysis
-        response = ollama.generate(
+        analysis_text = gemini_generate(
             model=ANALYSIS_MODEL,
             prompt=analysis_prompt,
-            options={"temperature": 0.3}
+            temperature=0.3,
+            response_mime_type="application/json"
         )
-        
-        analysis_text = response.get("response", "")
         
         # Try to parse JSON from response
         import json

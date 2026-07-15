@@ -25,7 +25,7 @@ import os
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import ollama
+from agent.gemini_client import get_gemini_client, gemini_chat, gemini_generate
 
 from context.history_manager import ConversationHistoryManager
 from context.window_manager import ContextWindowManager
@@ -38,12 +38,13 @@ from .prompt_templates import (
 )
 
 # Models configuration — used by orchestrator stage modules via import
-ESCALATION_MODEL = "qwen3:latest"       # Fast model for JSON parsing/intent
-PLANNING_MODEL = "qwen3:latest"          # Fast model for tool planning (JSON)
-TOOL_MODEL = "qwen3:latest"              # Main model with function calling
-VERIFICATION_MODEL = "qwen3:latest"      # Verification/reasoning
-RESPONSE_MODEL = "qwen3:latest"          # Reasoning model for final response
-SQL_MODEL = "qwen2.5-coder:latest"       # SQL-specific model
+ESCALATION_MODEL = "gemini-2.5-flash"    # Fast model for JSON parsing/intent
+PLANNING_MODEL = "gemini-2.5-flash"      # Fast model for tool planning (JSON)
+TOOL_MODEL = "gemini-2.5-flash"          # Main model with function calling
+VERIFICATION_MODEL = "gemini-2.5-flash"  # Verification/reasoning
+RESPONSE_MODEL = "gemini-2.5-flash"      # Reasoning model for final response
+SQL_MODEL = "gemini-2.5-flash"           # SQL-specific model
+ANALYSIS_MODEL = "gemini-2.5-flash"      # Analysis model (payroll, CV, attendance)
 
 # Maximum iterations for tool execution loop
 MAX_TOOL_ITERATIONS = 50

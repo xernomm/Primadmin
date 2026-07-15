@@ -32,16 +32,29 @@ def _get_connection():
     return cx_Oracle.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=dsn)
 
 
-def search_employees(query: str, limit: int = 20) -> Dict[str, Any]:
+def search_employees(
+    query: Optional[str] = None,
+    position: Optional[str] = None,
+    department: Optional[str] = None,
+    status: Optional[str] = None,
+    min_salary: Optional[float] = None,
+    max_salary: Optional[float] = None,
+    limit: int = 20
+) -> Dict[str, Any]:
     """
-    Search employees by name, email, or phone (partial match).
+    Mencari data karyawan secara fleksibel dan melakukan filter dinamis.
     
     Args:
-        query: Search query string
-        limit: Maximum number of results (default: 20)
+        query: Kata kunci pencarian nama, email, atau telepon (opsional)
+        position: Jabatan karyawan (opsional)
+        department: Departemen karyawan (opsional)
+        status: Status karyawan, misal 'active' (opsional)
+        min_salary: Gaji minimum (opsional)
+        max_salary: Gaji maksimum (opsional)
+        limit: Jumlah maksimal hasil (default: 20)
         
     Returns:
-        Dict with columns and data
+        Dict dengan kolom dan data hasil filter
     """
     try:
         conn = _get_connection()
@@ -49,15 +62,40 @@ def search_employees(query: str, limit: int = 20) -> Dict[str, Any]:
         
         sql = """
             SELECT id, name, employee_code, position, status, 
-                   basic_salary, phone, email, marital_status, department, sp_level
+                   basic_salary, phone, email, marital_status, department, sp_level, remaining_leave
             FROM employees
-            WHERE LOWER(name) LIKE :query 
-               OR LOWER(email) LIKE :query 
-               OR phone LIKE :query
-            FETCH FIRST :lim ROWS ONLY
+            WHERE 1=1
         """
-        search_pattern = f"%{query.lower()}%"
-        cur.execute(sql, {"query": search_pattern, "lim": limit})
+        params = {}
+        
+        if query:
+            sql += " AND (LOWER(name) LIKE :query OR LOWER(email) LIKE :query OR phone LIKE :query)"
+            params["query"] = f"%{query.lower()}%"
+            
+        if position:
+            sql += " AND LOWER(position) = :position"
+            params["position"] = position.lower()
+            
+        if department:
+            sql += " AND LOWER(department) = :department"
+            params["department"] = department.lower()
+            
+        if status:
+            sql += " AND LOWER(status) = :status"
+            params["status"] = status.lower()
+            
+        if min_salary is not None:
+            sql += " AND basic_salary >= :min_salary"
+            params["min_salary"] = float(min_salary)
+            
+        if max_salary is not None:
+            sql += " AND basic_salary <= :max_salary"
+            params["max_salary"] = float(max_salary)
+            
+        sql += " ORDER BY id ASC FETCH FIRST :lim ROWS ONLY"
+        params["lim"] = limit
+        
+        cur.execute(sql, params)
         
         columns = [desc[0] for desc in cur.description]
         rows = cur.fetchall()
@@ -155,7 +193,7 @@ def get_employee_by_id(emp_id: int) -> Dict[str, Any]:
 
 def get_all_employees(limit: int = 100) -> Dict[str, Any]:
     """
-    Retrieve all employees with basic details.
+    Retrieve all employees with basic details, remaining leave, and SP level.
     
     Args:
         limit: Maximum number of rows (default: 100)
@@ -169,7 +207,7 @@ def get_all_employees(limit: int = 100) -> Dict[str, Any]:
         
         sql = """
             SELECT id, name, employee_code as employee_number, position, status, 
-                   basic_salary as salary, phone, email, department
+                   basic_salary as salary, phone, email, department, remaining_leave, sp_level
             FROM employees
             ORDER BY id ASC
             FETCH FIRST :lim ROWS ONLY
@@ -205,7 +243,7 @@ def create_employee(name: str) -> Dict[str, Any]:
     try:
         now = datetime.now()
         random_number = random.randint(100, 999)
-        employee_number = f"{now.year}-{now.month:02d}-{now.day:02d}-{random_number}"
+        employee_number = f"EMP{now.month:02d}.{random_number}.{now.year}.{now.day:02d}"
         
         conn = _get_connection()
         cur = conn.cursor()
@@ -255,23 +293,153 @@ CV_TABLE_COLUMNS = {
 
 def update_employee_by_id(emp_id: int, updates: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]:
     """
-    Update employee details by ID.
-    Supports fields from the 'employees' table.
+    Memperbarui/Edit data karyawan secara universal.
+    Secara otomatis mendeteksi dan memperbarui field di tabel 'employees' maupun 'employee_cv'
+    dalam satu transaksi database yang aman.
     
     Args:
-        emp_id: Employee ID
+        emp_id: Database ID karyawan
         updates: Dict of field names and values to update (optional)
-        **kwargs: The columns to update, directly as keyword arguments
-        
-    Valid employees fields: position, address, status, basic_salary, phone, email,
-                            marital_status, department, employment_status, sp_level,
-                            remaining_leave, bpjs_number, joined_at
+        **kwargs: Field dan nilai baru yang di-pass langsung sebagai arguments
         
     Returns:
-        Dict with success status and message
+        Dict status keberhasilan, pesan, dan data field yang diperbarui
     """
-    actual_updates = updates or {}
+    import json
+    import ast
+    import re
+    
+    actual_updates = {}
+    
+    # 1. Safely parse 'updates' if it is a string representation of a dict
+    if isinstance(updates, str):
+        updates_str = updates.strip()
+        parsed = None
+        try:
+            parsed = json.loads(updates_str)
+        except Exception:
+            try:
+                parsed = ast.literal_eval(updates_str)
+            except Exception:
+                pass
+        
+        if not isinstance(parsed, dict):
+            # Attempt to extract dict from string using regex
+            match = re.search(r'\{[\s\S]*\}', updates_str)
+            if match:
+                try:
+                    parsed = json.loads(match.group())
+                except Exception:
+                    try:
+                        parsed = ast.literal_eval(match.group())
+                    except Exception:
+                        pass
+        
+        if isinstance(parsed, dict):
+            actual_updates = parsed
+        else:
+            return {
+                "success": False,
+                "error": f"Argumen 'updates' dikirim sebagai string yang tidak dapat diparse sebagai dictionary: '{updates}'"
+            }
+    elif isinstance(updates, dict):
+        actual_updates = dict(updates)
+    elif updates is not None:
+        return {
+            "success": False,
+            "error": f"Argumen 'updates' harus berupa dictionary atau string representasi dictionary, namun menerima tipe: {type(updates).__name__}"
+        }
+        
+    # Merge kwargs (giving them precedence if passed explicitly)
     actual_updates.update({k: v for k, v in kwargs.items() if v is not None})
+    
+    # 2. Unwrap nested 'data' if passed directly from extract_data_from_file result
+    if "data" in actual_updates and isinstance(actual_updates["data"], dict):
+        nested_data = actual_updates["data"]
+        for k, v in nested_data.items():
+            if k not in actual_updates or actual_updates[k] is None:
+                actual_updates[k] = v
+        actual_updates.pop("data", None)
+        
+    # Handle list of education dictionaries if present (take the first/most recent one)
+    if "education" in actual_updates and isinstance(actual_updates["education"], list) and len(actual_updates["education"]) > 0:
+        first_edu = actual_updates["education"][0]
+        if isinstance(first_edu, dict):
+            actual_updates["education"] = first_edu
+            
+    # Handle nested education dictionary
+    if "education" in actual_updates and isinstance(actual_updates["education"], dict):
+        edu = actual_updates.pop("education")
+        edu_mappings = {
+            "institution": "education_institution",
+            "univ": "education_institution",
+            "university": "education_institution",
+            "school": "education_institution",
+            "major": "education_major",
+            "jurusan": "education_major",
+            "year": "graduation_year",
+            "grad_year": "graduation_year",
+            "level": "education_level",
+            "jenjang": "education_level",
+            "degree": "education_level",
+        }
+        for k, v in edu.items():
+            k_lower = k.lower()
+            if k_lower in edu_mappings:
+                canonical = edu_mappings[k_lower]
+                if canonical not in actual_updates or actual_updates[canonical] is None:
+                    actual_updates[canonical] = v
+            else:
+                if k in ["education_level", "education_institution", "education_major", "graduation_year"]:
+                    if k not in actual_updates or actual_updates[k] is None:
+                        actual_updates[k] = v
+                        
+    # 3. Defensive mapping of key variations and aliases
+    alias_map = {
+        "phone_number": ["phone"],
+        "phone_no": ["phone"],
+        "no_telp": ["phone"],
+        "no_hp": ["phone"],
+        "no_handphone": ["phone"],
+        "handphone": ["phone"],
+        "email_address": ["email"],
+        "education": ["education_level"],
+        "experience": ["work_experience"],
+        "work_history": ["work_experience"],
+        "riwayat_pekerjaan": ["work_experience"],
+        "keahlian": ["skills"],
+        "salary": ["basic_salary", "current_salary"],
+        "gaji": ["basic_salary", "current_salary"],
+        "dept": ["department", "current_department"],
+        "job_title": ["position", "current_position"],
+    }
+    
+    for alias, canonical_keys in alias_map.items():
+        if alias in actual_updates:
+            val = actual_updates.pop(alias)
+            if val is not None:
+                for canonical in canonical_keys:
+                    if canonical not in actual_updates or actual_updates[canonical] is None:
+                        actual_updates[canonical] = val
+                        
+    # Apply cross-mappings to keep tables synchronized
+    cross_mappings = {
+        "position": "current_position",
+        "current_position": "position",
+        "department": "current_department",
+        "current_department": "department",
+        "basic_salary": "current_salary",
+        "current_salary": "basic_salary",
+    }
+    
+    for src, dst in cross_mappings.items():
+        if src in actual_updates and actual_updates[src] is not None:
+            if dst not in actual_updates or actual_updates[dst] is None:
+                actual_updates[dst] = actual_updates[src]
+                
+    # Filter out None values to prevent accidentally overwriting with nulls
+    actual_updates = {k: v for k, v in actual_updates.items() if v is not None}
+
     
     # Guard: must be a non-empty dict
     if not actual_updates:
@@ -281,8 +449,7 @@ def update_employee_by_id(emp_id: int, updates: Optional[Dict[str, Any]] = None,
         }
     
     # Oracle ORA-01484 fix: Ensure no lists/arrays are passed as bound values to standard SQL
-    # Convert lists to comma-separated strings
-    for k, v in actual_updates.items():
+    for k, v in list(actual_updates.items()):
         if isinstance(v, list):
             actual_updates[k] = ", ".join(map(str, v))
 
@@ -290,32 +457,70 @@ def update_employee_by_id(emp_id: int, updates: Optional[Dict[str, Any]] = None,
         conn = _get_connection()
         cur = conn.cursor()
         
+        # Verify employee exists
+        cur.execute("SELECT name FROM employees WHERE id = :eid", {"eid": emp_id})
+        emp_exists = cur.fetchone()
+        if not emp_exists:
+            cur.close()
+            conn.close()
+            return {"success": False, "error": f"Karyawan dengan ID {emp_id} tidak ditemukan."}
+        
         # Get valid columns for employees table (dynamically)
         cur.execute("SELECT * FROM employees WHERE ROWNUM = 1")
         valid_emp_columns = set(
             desc[0].lower() for desc in cur.description
             if desc[0].lower() not in ["id", "employee_code"]
         )
-        emp_updates = {k: v for k, v in actual_updates.items() if k.lower() in valid_emp_columns}
         
-        if not emp_updates:
+        # Get valid columns for employee_cv table (dynamically)
+        cur.execute("SELECT * FROM employee_cv WHERE ROWNUM = 1")
+        valid_cv_columns = set(
+            desc[0].lower() for desc in cur.description
+            if desc[0].lower() not in ["id", "employee_id"]
+        )
+        
+        # Split updates
+        emp_updates = {k: v for k, v in actual_updates.items() if k.lower() in valid_emp_columns}
+        cv_updates = {k: v for k, v in actual_updates.items() if k.lower() in valid_cv_columns}
+        
+        if not emp_updates and not cv_updates:
             cur.close()
             conn.close()
             return {"success": False, "error": "Tidak ada kolom valid yang diperbarui. Periksa nama field yang diberikan."}
         
         messages = []
+        updated_data = {}
         
         # --- Update employees table ---
         if emp_updates:
             emp_updates["emp_id"] = emp_id
             set_clause = ", ".join(f"{k} = :{k}" for k in emp_updates if k != "emp_id")
             cur.execute(f"UPDATE employees SET {set_clause} WHERE id = :emp_id", emp_updates)
-            messages.append(f"{len(emp_updates) - 1} field tabel employees")
+            messages.append(f"{len(emp_updates) - 1} field di tabel employees")
+            
+        # --- Update employee_cv table ---
+        if cv_updates:
+            # Check if CV record exists
+            cur.execute("SELECT id FROM employee_cv WHERE employee_id = :eid", {"eid": emp_id})
+            cv_row = cur.fetchone()
+            
+            if cv_row:
+                cv_updates["emp_id"] = emp_id
+                set_clause = ", ".join(f"{k} = :{k}" for k in cv_updates if k != "emp_id")
+                set_clause += ", updated_at = CURRENT_TIMESTAMP"
+                cur.execute(f"UPDATE employee_cv SET {set_clause} WHERE employee_id = :emp_id", cv_updates)
+                messages.append(f"{len(cv_updates) - 1} field di tabel employee_cv")
+            else:
+                # Insert minimal CV record with the given fields
+                cv_updates["employee_id"] = emp_id
+                cols = ", ".join(cv_updates.keys())
+                placeholders = ", ".join(f":{k}" for k in cv_updates.keys())
+                cur.execute(f"INSERT INTO employee_cv ({cols}) VALUES ({placeholders})", cv_updates)
+                messages.append(f"{len(cv_updates) - 1} field di tabel employee_cv (record baru dibuat)")
         
         conn.commit()
 
-        # -- Re-fetch actual committed values so Stage 4 can verify without hallucinating --
-        updated_data = {}
+        # -- Re-fetch actual committed values for verification --
         try:
             if emp_updates:
                 fields = [k for k in emp_updates if k != "emp_id"]
@@ -328,16 +533,29 @@ def update_employee_by_id(emp_id: int, updates: Optional[Dict[str, Any]] = None,
                     for i, field in enumerate(fields):
                         val = row[i]
                         updated_data[field] = val.read() if hasattr(val, "read") else val
+            
+            if cv_updates:
+                cv_fields = [k for k in cv_updates if k not in ("emp_id", "employee_id")]
+                if cv_fields:
+                    cur.execute(
+                        f"SELECT {', '.join(cv_fields)} FROM employee_cv WHERE employee_id = :eid",
+                        {"eid": emp_id}
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        for i, field in enumerate(cv_fields):
+                            val = row[i]
+                            updated_data[field] = val.read() if hasattr(val, "read") else val
         except Exception:
             pass  # non-critical
-
+            
         cur.close()
         conn.close()
 
         return {
             "success": True,
             "message": f"Data karyawan ID {emp_id} berhasil diperbarui: {', '.join(messages)}.",
-            "updated_fields": updated_data  # actual values now in DB — source of truth for verification
+            "updated_fields": updated_data
         }
     except Exception as e:
         return {"success": False, "error": str(e), "trace": traceback.format_exc()}
@@ -542,7 +760,7 @@ def get_employee_files(emp_id: int) -> Dict[str, Any]:
 
     Returns:
         Dict berisi list file CV dan payroll dengan server_url dan abs_path.
-        Gunakan abs_path untuk extract_cv_from_file.
+        Gunakan abs_path untuk extract_data_from_file.
     """
     try:
         conn = _get_connection()
@@ -623,7 +841,7 @@ def get_employee_files(emp_id: int) -> Dict[str, Any]:
             "employee_id": emp_id,
             "employee_name": emp_name,
             "files": files,
-            "hint": "Gunakan 'abs_path' dari files.cv atau files.payroll_slips sebagai file_path di extract_cv_from_file / get_payroll_file."
+            "hint": "Gunakan 'abs_path' dari files.cv atau files.payroll_slips sebagai file_path di extract_data_from_file / get_payroll_file."
         }
 
     except Exception as e:
@@ -638,13 +856,33 @@ def get_employee_files(emp_id: int) -> Dict[str, Any]:
 EMPLOYEE_TOOLS = [
     {
         "name": "search_employees",
-        "description": "Mencari data karyawan secara fleksibel (Fuzzy Search). Gunakan tool ini untuk mencari berdasarkan nama, email, atau telepon. PENTING: Tool ini mengembalikan 'id' (database ID integer) yang digunakan untuk tool lainnya.",
+        "description": "Mencari data karyawan secara fleksibel dan melakukan filter dinamis. Gunakan tool ini untuk mencari berdasarkan nama, email, atau telepon (fuzzy query), atau melakukan filter spesifik berdasarkan jabatan (position), departemen (department), status kepegawaian (status), serta rentang gaji (min_salary dan max_salary). PENTING: Tool ini mengembalikan 'id' (database ID integer) yang digunakan untuk tool lainnya.",
         "parameters": {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Kata kunci pencarian (nama, email, atau telepon). Contoh: 'Budi', 'budi@company.com'"
+                    "description": "Kata kunci pencarian nama, email, atau telepon (opsional). Contoh: 'Budi'"
+                },
+                "position": {
+                    "type": "string",
+                    "description": "Jabatan/posisi karyawan (opsional). Contoh: 'Manager'"
+                },
+                "department": {
+                    "type": "string",
+                    "description": "Departemen karyawan (opsional). Contoh: 'IT'"
+                },
+                "status": {
+                    "type": "string",
+                    "description": "Status karyawan (opsional). Contoh: 'active', 'inactive'"
+                },
+                "min_salary": {
+                    "type": "number",
+                    "description": "Gaji pokok minimum (opsional). Contoh: 8000000"
+                },
+                "max_salary": {
+                    "type": "number",
+                    "description": "Gaji pokok maksimum (opsional). Contoh: 15000000"
                 },
                 "limit": {
                     "type": "integer",
@@ -652,12 +890,12 @@ EMPLOYEE_TOOLS = [
                     "default": 20
                 }
             },
-            "required": ["query"]
+            "required": []
         }
     },
     {
         "name": "get_employee_by_id",
-        "description": "Mengambil DETAIL LENGKAP satu karyawan. WAJIB dipanggil setelah search_employees untuk mendapatkan informasi lengkap seperti gaji, alamat, BPJS, sisa cuti, dll. PENTING: Output juga menyertakan 'CV_FILE_PATH' (path file CV, gunakan sebagai file_path di extract_cv_from_file) dan 'cv_info' (data profil CV: pendidikan, skill, sertifikasi, dll). Gunakan {{step_N.result.data.CV_FILE_PATH}} untuk file_path di step berikutnya.",
+        "description": "Mengambil DETAIL LENGKAP satu karyawan. WAJIB dipanggil setelah search_employees untuk mendapatkan informasi lengkap seperti gaji, alamat, BPJS, sisa cuti, dll. PENTING: Output juga menyertakan 'CV_FILE_PATH' (path file CV, gunakan sebagai file_path di extract_data_from_file) dan 'cv_info' (data profil CV: pendidikan, skill, sertifikasi, dll). Gunakan {{step_N.result.data.CV_FILE_PATH}} untuk file_path di step berikutnya.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -671,7 +909,7 @@ EMPLOYEE_TOOLS = [
     },
     {
         "name": "get_all_employees",
-        "description": "Mengambil daftar SEMUA karyawan dengan info dasar. Gunakan jika user meminta 'daftar semua karyawan' atau statistik keseluruhan.",
+        "description": "Mengambil daftar SEMUA karyawan dengan info dasar termasuk sisa cuti dan level SP. Gunakan jika user meminta 'daftar semua karyawan' atau statistik keseluruhan.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -700,7 +938,7 @@ EMPLOYEE_TOOLS = [
     },
     {
         "name": "update_employee_by_id",
-        "description": "UPDATE data UTAMA karyawan (hanya tabel employees). HARUS gunakan emp_id (database ID integer). Gunakan tool ini HANYA untuk update informasi inti pegawai seperti: posisi, departemen, alamat, gaji pokok (basic_salary), email, telepon, status pernikahan, status kepegawaian, BPJS number, sisa cuti, dan tanggal bergabung. DILARANG menggunakan tool ini untuk data CV atau potongan gaji bulanan (gunakan update_employee_cv untuk itu).",
+        "description": "UPDATE data karyawan secara universal. HARUS gunakan emp_id (database ID integer). Tool ini secara dinamis memperbarui kolom pada tabel 'employees' (seperti posisi, departemen, alamat, gaji pokok basic_salary, email, telepon, status pernikahan, status kepegawaian, BPJS number, sisa cuti, level SP, tanggal bergabung) dan/atau kolom pada tabel 'employee_cv' (seperti pendidikan, sertifikasi, keahlian, rekening bank, kontak darurat, serta potongan bulanan).",
         "parameters": {
             "type": "object",
             "properties": {
@@ -708,19 +946,41 @@ EMPLOYEE_TOOLS = [
                     "type": "integer",
                     "description": "Database ID karyawan (integer). BUKAN employee_code! Dapatkan dari search_employees."
                 },
-                "position": {"type": "string", "description": "Jabatan/Posisi (contoh: 'Manager')"},
-                "department": {"type": "string", "description": "Departemen (contoh: 'IT')"},
-                "status": {"type": "string", "description": "Status karyawan (contoh: 'active')"},
-                "employment_status": {"type": "string", "description": "Status kepegawaian (contoh: 'Tetap', 'Kontrak')"},
-                "basic_salary": {"type": "number", "description": "Gaji Pokok (angka)"},
-                "phone": {"type": "string", "description": "Nomor Telepon"},
-                "email": {"type": "string", "description": "Alamat Email"},
-                "address": {"type": "string", "description": "Alamat Lengkap"},
-                "marital_status": {"type": "string", "description": "Status Pernikahan (contoh: 'Menikah', 'Belum Menikah')"},
-                "sp_level": {"type": "integer", "description": "Tingkat Surat Peringatan (SP) 0-3"},
-                "remaining_leave": {"type": "integer", "description": "Sisa Cuti (hari)"},
-                "bpjs_number": {"type": "string", "description": "Nomor Kartu BPJS (Bukan nilai potongan uangnya)"},
-                "joined_at": {"type": "string", "description": "Tanggal Bergabung (format YYYY-MM-DD)"}
+                "position": {"type": "string", "description": "Jabatan/Posisi (tabel employees)"},
+                "department": {"type": "string", "description": "Departemen (tabel employees)"},
+                "status": {"type": "string", "description": "Status karyawan, misal 'active' (tabel employees)"},
+                "employment_status": {"type": "string", "description": "Status kepegawaian (tabel employees)"},
+                "basic_salary": {"type": "number", "description": "Gaji Pokok (tabel employees)"},
+                "phone": {"type": "string", "description": "Nomor Telepon (tabel employees)"},
+                "email": {"type": "string", "description": "Alamat Email (tabel employees)"},
+                "address": {"type": "string", "description": "Alamat Lengkap (tabel employees)"},
+                "marital_status": {"type": "string", "description": "Status Pernikahan (tabel employees)"},
+                "sp_level": {"type": "integer", "description": "Tingkat Surat Peringatan SP 0-3 (tabel employees)"},
+                "remaining_leave": {"type": "integer", "description": "Sisa Cuti dalam hari (tabel employees)"},
+                "bpjs_number": {"type": "string", "description": "Nomor BPJS (tabel employees)"},
+                "joined_at": {"type": "string", "description": "Tanggal Bergabung YYYY-MM-DD (tabel employees)"},
+                "education_level": {"type": "string", "description": "Tingkat pendidikan terakhir (tabel CV)"},
+                "education_institution": {"type": "string", "description": "Nama universitas/sekolah (tabel CV)"},
+                "education_major": {"type": "string", "description": "Jurusan pendidikan (tabel CV)"},
+                "graduation_year": {"type": "integer", "description": "Tahun kelulusan (tabel CV)"},
+                "skills": {"type": "string", "description": "Daftar skill keahlian (tabel CV)"},
+                "certifications": {"type": "string", "description": "Sertifikasi keahlian (tabel CV)"},
+                "work_experience": {"type": "string", "description": "Ringkasan pengalaman kerja (tabel CV)"},
+                "emergency_contact_name": {"type": "string", "description": "Nama kontak darurat (tabel CV)"},
+                "emergency_contact_phone": {"type": "string", "description": "Telepon kontak darurat (tabel CV)"},
+                "emergency_contact_relation": {"type": "string", "description": "Hubungan kontak darurat (tabel CV)"},
+                "bank_name": {"type": "string", "description": "Nama Bank (tabel CV)"},
+                "bank_account_number": {"type": "string", "description": "Nomor rekening bank (tabel CV)"},
+                "bank_account_name": {"type": "string", "description": "Nama pemilik rekening bank (tabel CV)"},
+                "deduction_bpjs_kesehatan": {"type": "number", "description": "Potongan bulanan BPJS Kesehatan (tabel CV)"},
+                "deduction_bpjs_ketenagakerjaan": {"type": "number", "description": "Potongan bulanan BPJS Ketenagakerjaan (tabel CV)"},
+                "deduction_meal": {"type": "number", "description": "Potongan bulanan Makan (tabel CV)"},
+                "deduction_transport": {"type": "number", "description": "Potongan bulanan Transport (tabel CV)"},
+                "deduction_insurance": {"type": "number", "description": "Potongan bulanan Asuransi (tabel CV)"},
+                "deduction_laptop_installment": {"type": "number", "description": "Potongan cicilan laptop (tabel CV)"},
+                "deduction_laptop_remaining_months": {"type": "integer", "description": "Sisa bulan cicilan laptop (tabel CV)"},
+                "deduction_other": {"type": "number", "description": "Potongan lainnya (tabel CV)"},
+                "deduction_other_description": {"type": "string", "description": "Deskripsi potongan lainnya (tabel CV)"}
             },
             "required": ["emp_id"]
         }
@@ -740,87 +1000,11 @@ EMPLOYEE_TOOLS = [
         }
     },
     {
-        "name": "filter_employees_by_position",
-        "description": "Filter karyawan berdasarkan jabatan/posisi (partial match).",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "position": {
-                    "type": "string",
-                    "description": "Jabatan yang dicari. Contoh: 'Manager', 'Staff', 'Developer'"
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Jumlah maksimal hasil (default: 50)",
-                    "default": 50
-                }
-            },
-            "required": ["position"]
-        }
-    },
-    {
-        "name": "filter_employees_by_status",
-        "description": "Filter karyawan berdasarkan status kepegawaian.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "status": {
-                    "type": "string",
-                    "description": "Status: 'active', 'inactive', 'terminated'"
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Jumlah maksimal hasil (default: 50)",
-                    "default": 50
-                }
-            },
-            "required": ["status"]
-        }
-    },
-    {
-        "name": "filter_employees_salary_above",
-        "description": "Filter karyawan dengan gaji >= threshold.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "min_salary": {
-                    "type": "number",
-                    "description": "Batas minimum gaji. Contoh: 10000000"
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Jumlah maksimal hasil (default: 50)",
-                    "default": 50
-                }
-            },
-            "required": ["min_salary"]
-        }
-    },
-    {
-        "name": "filter_employees_salary_below",
-        "description": "Filter karyawan dengan gaji <= threshold.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "max_salary": {
-                    "type": "number",
-                    "description": "Batas maksimum gaji. Contoh: 5000000"
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Jumlah maksimal hasil (default: 50)",
-                    "default": 50
-                }
-            },
-            "required": ["max_salary"]
-        }
-    },
-    {
         "name": "get_employee_files",
         "description": (
             "Ambil daftar semua file penting milik satu karyawan: file CV (dari employee_cv) "
             "dan slip gaji/payroll (dari payroll_slips). Mengembalikan 'abs_path' dan 'server_url' "
-            "untuk setiap file. WAJIB dipanggil sebelum extract_cv_from_file atau get_payroll_file "
+            "untuk setiap file. WAJIB dipanggil sebelum extract_data_from_file atau get_payroll_file "
             "agar path file yang digunakan AKURAT — jangan hardcode path atau tebak nama file."
         ),
         "parameters": {

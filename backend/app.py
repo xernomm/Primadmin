@@ -4,7 +4,7 @@ nest_asyncio.apply()
 from flask import Flask, request, jsonify, g
 from flask_jwt_extended import get_jwt_identity  # pastikan ini di-import
 from flask_cors import CORS
-import ollama
+from agent.gemini_client import gemini_generate
 import base64, os
 import logging
 import traceback
@@ -143,7 +143,7 @@ def ask_with_tool():
         user_msg_id, conv_id = save_user_message(email, user_input, conversation_id=conversation_id)
 
         context = """Your name is Primassistant. You are a professional HR assistant that speaks bahasa Indonesia. 
-        You help HR teams manage employee data, attendance, leaves, and other HR operations.
+        You help HR teams manage employee data, attendance, leave balance (stored in employees table), and other HR operations.
         Always be helpful, professional, and accurate in your responses.
         Format data clearly using markdown tables when appropriate."""
 
@@ -204,10 +204,10 @@ def ask_context_only():
         context = get_context_from_rag(email, user_input)
 
         # Gunakan LLM langsung tanpa tools
-        response = ollama.generate(
-            model="llama3",
+        response = gemini_generate(
+            model="gemini-2.5-flash",
             prompt=f"Gunakan informasi ini:\n{context}\n\nJawablah pertanyaan ini: {user_input}"
-        )["response"]
+        )
 
         save_assistant_message(conv_id, response)
 
